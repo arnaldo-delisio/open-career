@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+*.tsbuildinfo
+.npm/
+.pnpm-store/
+
+# Build artifacts
+dist/
+build/
+out/
+*.zip
+*.crx
+*.pem
+
+# Local environment and data
+.env
+.env.local
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

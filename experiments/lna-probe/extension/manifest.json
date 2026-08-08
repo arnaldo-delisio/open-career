@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "LNA probe (open-career OC-Q4)",
+  "version": "0.0.1",
+  "description": "Probes whether Chrome's Local Network Access gate applies to extension-origin requests to loopback.",
+  "permissions": ["storage", "sidePanel", "scripting", "alarms"],
+  "host_permissions": [
+    "http://localhost:8787/*",
+    "http://127.0.0.1:8787/*"
+  ],
+  "background": {
+    "service_worker": "sw.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "LNA probe"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
