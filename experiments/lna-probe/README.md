@@ -47,6 +47,20 @@ CDP_PORT=9401 node drive.mjs gesture   # side panel results
 Run headed on a real display (per `decisions/browser-agent-capabilities.md`); the LNA prompt is
 browser UI and is invisible to `Page.captureScreenshot`, so capture the X display to see it.
 
+## Result, Chrome 150.0.7871.186 (Linux, headed)
+
+All four extension transports reach loopback ungated, in both the default configuration and
+with the gate forced to its strict setting
+(`--enable-features=LocalNetworkAccessChecks:LocalNetworkAccessChecksWarn/false,LocalNetworkAccessChecksWebSockets,LocalNetworkAccessChecksWebTransport`).
+No preflight was ever sent, and the server saw no `Origin` header, so the requests are being
+treated as extension-privileged under `host_permissions` rather than as cross-origin web
+requests. The service-worker WebSocket stayed open 187 seconds with no debugger attached and no
+reconnect, so it does hold the worker alive past the 30s idle timer.
+
+The control proves the gate is live in the same browser: a fetch to the same URL from a *page*
+origin raises the "wants to access other apps and services on this device" prompt
+(`evidence-lna-prompt-page-origin.png`) and never reaches the server.
+
 ## Confound to respect
 
 Attaching a CDP debugger to a service worker keeps that worker alive. Any claim about the MV3
