@@ -74,6 +74,148 @@ def test_import_rejects_unknown_table(tmp_path):
         import_db(db, dump)
 
 
+def test_import_missing_file_is_clean_error_and_exit_1(tmp_path, monkeypatch, capsys):
+    with pytest.raises(ValueError, match="import file not found"):
+        import_from_file(tmp_path / "db.sqlite3", tmp_path / "nope.json")
+    # Through the CLI: one-line error, exit code 1.
+    from apps.cli.main import main
+
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(tmp_path))
+    with pytest.raises(SystemExit) as exc:
+        main(["import", str(tmp_path / "nope.json")])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("import failed: import file not found")
+    assert "Traceback" not in err
+
+
+def test_import_rejects_non_list_table_value(tmp_path):
+    dump = {"format": "open-career-export", "version": 1, "tables": {"career_edges": "garbage"}}
+    with pytest.raises(ValueError, match="must be a list of row objects"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+def test_import_rejects_unknown_column(tmp_path):
+    dump = {
+        "format": "open-career-export",
+        "version": 1,
+        "tables": {"career_edges": [{"source_id": "a", "surprise_col": 1}]},
+    }
+    with pytest.raises(ValueError, match=r"row 0: unknown columns \['surprise_col'\]"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+def _edge_row(**overrides):
+    row = {
+        "id": None,
+        "source_id": "a",
+        "target_id": "b",
+        "edge_type": "demonstrates",
+        "claim_kind": "fact",
+        "source": "user",
+        "created_at": "2026-08-10T00:00:00Z",
+    }
+    row.update(overrides)
+    return row
+
+
+def test_import_check_violation_is_clean_error(tmp_path):
+    dump = {
+        "format": "open-career-export",
+        "version": 1,
+        "tables": {"career_edges": [_edge_row(claim_kind="stated")]},
+    }
+    with pytest.raises(ValueError, match="loading table 'career_edges' failed: CHECK constraint"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+def test_failed_import_leaves_db_unchanged(tmp_path):
+    db = tmp_path / "db.sqlite3"
+    migrate(db)
+    conn = sqlite3.connect(db)
+    SqliteCareerEdgeRepository(conn).add(
+        CareerEdge("keep:1", "keep:2", "demonstrates", "fact", "user")
+    )
+    conn.close()
+
+    dump = {
+        "format": "open-career-export",
+        "version": 1,
+        "tables": {
+            "career_edges": [
+                _edge_row(id=10),
+                _edge_row(id=11, claim_kind="stated"),  # last row violates the CHECK
+            ]
+        },
+    }
+    with pytest.raises(ValueError, match="loading table 'career_edges' failed"):
+        import_db(db, dump)
+
+    conn = sqlite3.connect(db)
+    rows = SqliteCareerEdgeRepository(conn).list_all()
+    conn.close()
+    assert len(rows) == 1
+    assert rows[0].source_id == "keep:1"  # pre-import state intact, nothing deleted
+
+
+def test_invalid_dump_leaves_legacy_db_untouched(tmp_path):
+    """A structurally invalid dump is rejected before the database is touched:
+    a legacy db with pending migrations stays byte-identical, no schema_migrations
+    created, no backup written."""
+    db = tmp_path / "legacy.sqlite3"
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute("CREATE TABLE legacy_notes (id INTEGER PRIMARY KEY, body TEXT)")
+        conn.execute("INSERT INTO legacy_notes (body) VALUES ('kept')")
+    conn.close()
+    before = db.read_bytes()
+
+    with pytest.raises(ValueError, match="not an open-career export"):
+        import_db(db, {"format": "something-else", "version": 1, "tables": {}})
+
+    assert db.read_bytes() == before  # byte-identical
+    assert not (tmp_path / "backups").exists()
+    conn = sqlite3.connect(db)
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "schema_migrations" not in tables
+    finally:
+        conn.close()
+
+
+def test_corrupt_target_db_is_clean_cli_error(tmp_path, monkeypatch, capsys):
+    instance = tmp_path / "instance"
+    instance.mkdir()
+    (instance / "open-career.sqlite3").write_bytes(b"this is not a sqlite database")
+    dump_file = tmp_path / "dump.json"
+    dump_file.write_text('{"format": "open-career-export", "version": 1, "tables": {"career_edges": []}}')
+
+    from apps.cli.main import main
+
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
+    with pytest.raises(SystemExit) as exc:
+        main(["import", str(dump_file)])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("import failed: cannot open instance database:")
+    assert "Traceback" not in err
+
+
+def test_non_object_top_level_is_clean_cli_error(tmp_path, monkeypatch, capsys):
+    dump_file = tmp_path / "list.json"
+    dump_file.write_text("[]")
+
+    from apps.cli.main import main
+
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(tmp_path))
+    with pytest.raises(SystemExit) as exc:
+        main(["import", str(dump_file)])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("import failed: not an open-career export")
+    assert "Traceback" not in err
+
+
 def test_import_into_populated_db_fully_replaces(tmp_path):
     src_db = tmp_path / "src.sqlite3"
     migrate(src_db)

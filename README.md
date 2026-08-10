@@ -43,8 +43,11 @@ uv run open-career init        # create instance/ and apply migrations
 uv run uvicorn apps.api.main:app   # then: curl localhost:8000/health
 ```
 
+`/health` reports status plus the edge count; `/docs` serves the API reference.
+
 Other commands: `open-career migrate`, `open-career export <file.json>`,
-`open-career import <file.json>`. Instance location defaults to `./instance`
+`open-career import <file.json>` (import fully replaces table contents; format and row
+schema in `docs/data-model.md`). Instance location defaults to `./instance`
 (override with `OPEN_CAREER_INSTANCE`). Tests: `uv run pytest`.
 
 MIT licensed. See `LICENSE`.
