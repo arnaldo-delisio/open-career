@@ -1,0 +1,477 @@
+{
+  "url": "https://job-boards.greenhouse.io/monzo/jobs/7343996",
+  "form_found": true,
+  "field_count": 30,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "first_name",
+      "autocomplete": "given-name",
+      "required": true,
+      "aria_label": "First Name",
+      "label": "First Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "last_name",
+      "autocomplete": "family-name",
+      "required": true,
+      "aria_label": "Last Name",
+      "label": "Last Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "email",
+      "autocomplete": "email",
+      "required": true,
+      "aria_label": "Email",
+      "label": "Email*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "country",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Country*",
+      "label": "Country*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "search",
+      "name": null,
+      "id": "iti-0__search-input",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Search",
+      "label": null,
+      "placeholder": "Search",
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "ul",
+      "type": "listbox",
+      "name": null,
+      "id": "iti-0__country-listbox",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "List of countries",
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "tel",
+      "name": null,
+      "id": "phone",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Phone",
+      "label": "Phone*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "candidate-location",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Location (City)*",
+      "label": "Location (City)*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "resume",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_62909546",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "🇺🇸 Are you a US tax resident?*",
+      "label": "🇺🇸 Are you a US tax resident?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_62909547",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "🔐 Keeping your data safe is really important to us. Please take a look at our Candidate Data Privacy Notice (linked below) and confirm that you have.*",
+      "label": "🔐 Keeping your data safe is really important to us. Please take a look at our Candidate Data Privacy Notice (linked below) and confirm that you have.*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_62909548",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "If you’d like to, please share your preferred pronouns (eg. they/them/theirs, she/her/hers).",
+      "label": "If you’d like to, please share your preferred pronouns (eg. they/them/theirs, she/her/hers).",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_62909549",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "If you'd like to, please spell out your name how it's pronounced so we know how to say it.",
+      "label": "If you'd like to, please spell out your name how it's pronounced so we know how to say it.",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_62909550",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "🛂 Please confirm your Work Authorisation Status*",
+      "label": "🛂 Please confirm your Work Authorisation Status*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "627",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "How would you describe your gender identity?",
+      "label": "How would you describe your gender identity?",
+      "placeholder": null,
+      "section": "👤 Identity survey",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "628",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Do you identify as transgender?",
+      "label": "Do you identify as transgender?",
+      "placeholder": null,
+      "section": "👤 Identity survey",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "629",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "What's your sexual orientation?",
+      "label": "What's your sexual orientation?",
+      "placeholder": null,
+      "section": "👤 Identity survey",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "630",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Do you identify as having a disability?",
+      "label": "Do you identify as having a disability?",
+      "placeholder": null,
+      "section": "👤 Identity survey",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "631",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Do you consider yourself to be neurodivergent?",
+      "label": "Do you consider yourself to be neurodivergent?",
+      "placeholder": null,
+      "section": "👤 Identity survey",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "632",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "How would your describe your ethnicity?",
+      "label": "How would your describe your ethnicity?",
+      "placeholder": null,
+      "section": "👤 Identity survey",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "gender",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Gender",
+      "label": "Gender",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "hispanic_ethnicity",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Are you Hispanic/Latino?",
+      "label": "Are you Hispanic/Latino?",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "veteran_status",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Veteran Status",
+      "label": "Veteran Status",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "disability_status",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Disability Status",
+      "label": "Disability Status",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification of Disability",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "gdpr_demographic_data_consent_given",
+      "id": "gdpr_demographic_data_consent_given_1",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "By checking this box, I consent to Monzo collecting, storing, and processing my responses to the demographic data surveys above.",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": true,
+      "option_label": "By checking this box, I consent to Monzo collecting, storing, and processing my responses to the demographic data surveys above."
+    }
+  ],
+  "radio_groups": {},
+  "custom_widgets": [
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "file-upload",
+      "name": "Resume/CV"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Resume/CV"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachDropboxGoogle DriveEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    }
+  ]
+}

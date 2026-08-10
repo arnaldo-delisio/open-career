@@ -1,0 +1,184 @@
+{
+  "url": "https://jobs.lever.co/veeva/466ed4a1-2c00-400e-8b9b-77b0c63d64d2/apply",
+  "form_found": true,
+  "field_count": 10,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "file",
+      "name": "resume",
+      "id": "resume-upload-input",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Resume/CV ATTACH RESUME/CVCouldn't auto-read resume.Analyzing resume...Success!",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "name",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Full name✱",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "email",
+      "name": "email",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Email✱",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "phone",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Phone",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "location",
+      "id": "location-input",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Current location No location found. Try entering a different locationLoading",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "org",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Current company",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "urls[LinkedIn]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "LinkedIn URL",
+      "placeholder": null,
+      "section": "Links",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "radio",
+      "name": "cards[1e898968-4134-450e-b7ab-4a1b94a75e6a][field0]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Yes",
+      "placeholder": null,
+      "section": "- Location: Portugal -",
+      "value_present": true,
+      "option_label": "Yes"
+    },
+    {
+      "tag": "input",
+      "type": "radio",
+      "name": "cards[1e898968-4134-450e-b7ab-4a1b94a75e6a][field0]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "No",
+      "placeholder": null,
+      "section": "- Location: Portugal -",
+      "value_present": true,
+      "option_label": "No"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "consent[marketing]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Yes, Veeva Systems can contact me about future job opportunities for up to 2 yearsPrivacy policy",
+      "placeholder": null,
+      "section": "- Location: Portugal -",
+      "value_present": true,
+      "option_label": "Yes, Veeva Systems can contact me about future job opportunities for up to 2 yearsPrivacy policy"
+    }
+  ],
+  "radio_groups": {
+    "cards[1e898968-4134-450e-b7ab-4a1b94a75e6a][field0]": [
+      "Yes",
+      "No"
+    ]
+  },
+  "custom_widgets": [
+    {
+      "cls": "postings-btn template-btn-utility visible-resume-upload",
+      "name": "ATTACH RESUME/CV"
+    },
+    {
+      "cls": "application-file-input invisible-resume-upload",
+      "name": ""
+    },
+    {
+      "cls": "resume-upload-failure",
+      "name": "Couldn't auto-read resume."
+    },
+    {
+      "cls": "resume-upload-label",
+      "name": "Couldn't auto-read resume."
+    },
+    {
+      "cls": "resume-upload-working",
+      "name": "Analyzing resume..."
+    },
+    {
+      "cls": "resume-upload-label",
+      "name": "Analyzing resume..."
+    },
+    {
+      "cls": "resume-upload-success",
+      "name": "Success!"
+    },
+    {
+      "cls": "resume-upload-label",
+      "name": "Success!"
+    },
+    {
+      "cls": "resume-upload-oversize",
+      "name": "File exceeds the maximum upload size of 100MB. Please try a smaller size."
+    }
+  ]
+}

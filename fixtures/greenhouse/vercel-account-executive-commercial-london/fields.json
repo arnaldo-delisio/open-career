@@ -1,0 +1,570 @@
+{
+  "url": "https://job-boards.greenhouse.io/vercel/jobs/6136160004",
+  "form_found": true,
+  "field_count": 36,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "first_name",
+      "autocomplete": "given-name",
+      "required": true,
+      "aria_label": "First Name",
+      "label": "First Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "last_name",
+      "autocomplete": "family-name",
+      "required": true,
+      "aria_label": "Last Name",
+      "label": "Last Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "email",
+      "autocomplete": "email",
+      "required": true,
+      "aria_label": "Email",
+      "label": "Email*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "country",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Country*",
+      "label": "Country*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "search",
+      "name": null,
+      "id": "iti-0__search-input",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Search",
+      "label": null,
+      "placeholder": "Search",
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "ul",
+      "type": "listbox",
+      "name": null,
+      "id": "iti-0__country-listbox",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "List of countries",
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "tel",
+      "name": null,
+      "id": "phone",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Phone",
+      "label": "Phone*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "resume",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "cover_letter",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385414004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you currently based in any of these countries? Please note these are the only countries where we are accepting applications*",
+      "label": "Are you currently based in any of these countries? Please note these are the only countries where we are accepting applications*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19392536004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you able to work from our London office on a hybrid schedule, 3 days a week?*",
+      "label": "Are you able to work from our London office on a hybrid schedule, 3 days a week?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385415004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Will you require Visa Sponsorship now, or in the future?*",
+      "label": "Will you require Visa Sponsorship now, or in the future?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385416004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Your authorization to work in the country where you live. Please choose the option that describes your work authorization. *",
+      "label": "Your authorization to work in the country where you live. Please choose the option that describes your work authorization. *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385417004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Do you live in one of the following states? Alabama, Alaska, Delaware, Kansas, Maine, Mississippi, Montana, Nebraska, New Mexico, North Dakota, South Dakota, West Virginia, or Wyoming.*",
+      "label": "Do you live in one of the following states? Alabama, Alaska, Delaware, Kansas, Maine, Mississippi, Montana, Nebraska, New Mexico, North Dakota, South Dakota, West Virginia, or Wyoming.*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385418004",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "LinkedIn Profile",
+      "label": "LinkedIn Profile",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385419004",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Twitter",
+      "label": "Twitter",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385420004",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Github",
+      "label": "Github",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385421004",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Website",
+      "label": "Website",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385422004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Where did you first hear about this role?*",
+      "label": "Where did you first hear about this role?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385423004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "By submitting my application, I acknowledge that I have read and understand Vercel’s Job Applicant Privacy Notice - https://vercel.com/legal/job-applicant-privacy-notice *",
+      "label": "By submitting my application, I acknowledge that I have read and understand Vercel’s Job Applicant Privacy Notice - https://vercel.com/legal/job-applicant-privacy-notice *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_19385424004",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Please double-check all the information provided above. Ensuring accuracy is crucial, as any errors or omissions may impact the review of your application.*",
+      "label": "Please double-check all the information provided above. Ensuring accuracy is crucial, as any errors or omissions may impact the review of your application.*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "4015790004",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "How would you describe your gender identity? (mark all that apply)",
+      "label": "How would you describe your gender identity? (mark all that apply)",
+      "placeholder": null,
+      "section": "U.S. Standard Demographic Questions",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "4015786004",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "How would you describe your racial/ethnic background? (mark all that apply)",
+      "label": "How would you describe your racial/ethnic background? (mark all that apply)",
+      "placeholder": null,
+      "section": "U.S. Standard Demographic Questions",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "4015785004",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "How would you describe your sexual orientation? (mark all that apply)",
+      "label": "How would you describe your sexual orientation? (mark all that apply)",
+      "placeholder": null,
+      "section": "U.S. Standard Demographic Questions",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "4015783004",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Do you identify as transgender?",
+      "label": "Do you identify as transgender?",
+      "placeholder": null,
+      "section": "U.S. Standard Demographic Questions",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "4015781004",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobili",
+      "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobili",
+      "placeholder": null,
+      "section": "U.S. Standard Demographic Questions",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "4015780004",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Are you a veteran or active member of the United States Armed Forces?",
+      "label": "Are you a veteran or active member of the United States Armed Forces?",
+      "placeholder": null,
+      "section": "U.S. Standard Demographic Questions",
+      "value_present": false
+    }
+  ],
+  "radio_groups": {},
+  "custom_widgets": [
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "file-upload",
+      "name": "Resume/CV"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Resume/CV"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachDropboxGoogle DriveEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload",
+      "name": "Cover Letter"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Cover Letter"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachDropboxGoogle DriveEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    }
+  ]
+}

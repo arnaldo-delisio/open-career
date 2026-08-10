@@ -1,0 +1,390 @@
+{
+  "url": "https://job-boards.greenhouse.io/gitlab/jobs/8503792002",
+  "form_found": true,
+  "field_count": 24,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "first_name",
+      "autocomplete": "given-name",
+      "required": true,
+      "aria_label": "First Name",
+      "label": "First Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "last_name",
+      "autocomplete": "family-name",
+      "required": true,
+      "aria_label": "Last Name",
+      "label": "Last Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "email",
+      "autocomplete": "email",
+      "required": true,
+      "aria_label": "Email",
+      "label": "Email*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "country",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Country",
+      "label": "Country",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "search",
+      "name": null,
+      "id": "iti-0__search-input",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Search",
+      "label": null,
+      "placeholder": "Search",
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "ul",
+      "type": "listbox",
+      "name": null,
+      "id": "iti-0__country-listbox",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "List of countries",
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "tel",
+      "name": null,
+      "id": "phone",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Phone",
+      "label": "Phone",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "resume",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "cover_letter",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101205002",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "LinkedIn Profile",
+      "label": "LinkedIn Profile",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101206002",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "What's the name you'd prefer us to use throughout the interview process?",
+      "label": "What's the name you'd prefer us to use throughout the interview process?",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101207002",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you subject to any employment agreements and/or post-employment restrictions with your current employer or a past employer?*",
+      "label": "Are you subject to any employment agreements and/or post-employment restrictions with your current employer or a past employer?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101208002",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "It is important to us to create an accessible and inclusive interview experience. Please let us know if there are any adjustments we can make to assist you during the hiring and interview process.",
+      "label": "It is important to us to create an accessible and inclusive interview experience. Please let us know if there are any adjustments we can make to assist you during the hiring and interview process.",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101209002",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Will you now or in the future require sponsorship for a visa to remain in your current location?*",
+      "label": "Will you now or in the future require sponsorship for a visa to remain in your current location?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101210002",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Have you previously worked at or consulted for GitLab?*",
+      "label": "Have you previously worked at or consulted for GitLab?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_36101211002",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "What is your current country of residence?*",
+      "label": "What is your current country of residence?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "gender",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Gender",
+      "label": "Gender",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "hispanic_ethnicity",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Are you Hispanic/Latino?",
+      "label": "Are you Hispanic/Latino?",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "veteran_status",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Veteran Status",
+      "label": "Veteran Status",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "disability_status",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Disability Status",
+      "label": "Disability Status",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification of Disability",
+      "value_present": false
+    }
+  ],
+  "radio_groups": {},
+  "custom_widgets": [
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "file-upload",
+      "name": "Resume/CV*"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Resume/CV*"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload",
+      "name": "Cover Letter"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Cover Letter"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    }
+  ]
+}

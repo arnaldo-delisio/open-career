@@ -1,0 +1,457 @@
+{
+  "url": "https://job-boards.greenhouse.io/anthropic/jobs/5208218008",
+  "form_found": true,
+  "field_count": 31,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "first_name",
+      "autocomplete": "given-name",
+      "required": true,
+      "aria_label": "First Name",
+      "label": "First Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "last_name",
+      "autocomplete": "family-name",
+      "required": true,
+      "aria_label": "Last Name",
+      "label": "Last Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "email",
+      "autocomplete": "email",
+      "required": true,
+      "aria_label": "Email",
+      "label": "Email*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "country",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Country*",
+      "label": "Country*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "search",
+      "name": null,
+      "id": "iti-0__search-input",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Search",
+      "label": null,
+      "placeholder": "Search",
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "ul",
+      "type": "listbox",
+      "name": null,
+      "id": "iti-0__country-listbox",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "List of countries",
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "tel",
+      "name": null,
+      "id": "phone",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Phone",
+      "label": "Phone*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "resume",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896470008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "(Optional) Personal Preferences",
+      "label": "(Optional) Personal Preferences",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896471008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Website",
+      "label": "Website",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896472008",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you open to working in-person in one of our offices 25% of the time?*",
+      "label": "Are you open to working in-person in one of our offices 25% of the time?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896473008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "When is the earliest you would want to start working with us?",
+      "label": "When is the earliest you would want to start working with us?",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896474008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Do you have any deadlines or timeline considerations we should be aware of?",
+      "label": "Do you have any deadlines or timeline considerations we should be aware of?",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896475008",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "AI Policy for Application*",
+      "label": "AI Policy for Application*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "textarea",
+      "type": "textarea",
+      "name": null,
+      "id": "question_15896476008",
+      "autocomplete": null,
+      "required": true,
+      "aria_label": "Why Anthropic?",
+      "label": "Why Anthropic?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "textarea",
+      "type": "textarea",
+      "name": null,
+      "id": "question_15897269008",
+      "autocomplete": null,
+      "required": true,
+      "aria_label": "Briefly describe a regulatory regime you have personally operationalized end-to-end — translating legal requirements into controls, documentation, testing, and reporting. What was the regime, what was",
+      "label": "Briefly describe a regulatory regime you have personally operationalized end-to-end — translating legal requirements into controls, documentation, testing, and reporting. What was the regime, what was",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "textarea",
+      "type": "textarea",
+      "name": null,
+      "id": "question_15897270008",
+      "autocomplete": null,
+      "required": true,
+      "aria_label": "Briefly describe a specific compliance obligation and how you would translate it into an operational control or process at a frontier AI company.",
+      "label": "Briefly describe a specific compliance obligation and how you would translate it into an operational control or process at a frontier AI company. *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896477008",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Do you require visa sponsorship? *",
+      "label": "Do you require visa sponsorship? *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896478008",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Will you now or will you in the future require employment visa sponsorship to work in the country in which the job you're applying for is located? *",
+      "label": "Will you now or will you in the future require employment visa sponsorship to work in the country in which the job you're applying for is located? *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "textarea",
+      "type": "textarea",
+      "name": null,
+      "id": "question_15896479008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Additional Information",
+      "label": "Additional Information",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896480008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "LinkedIn Profile",
+      "label": "LinkedIn Profile",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896481008",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you open to relocation for this role? *",
+      "label": "Are you open to relocation for this role? *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896482008",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "What is the address from which you plan on working? If you would need to relocate, please type \"relocating\".",
+      "label": "What is the address from which you plan on working? If you would need to relocate, please type \"relocating\".",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_15896483008",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Have you ever interviewed at Anthropic before?*",
+      "label": "Have you ever interviewed at Anthropic before?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    }
+  ],
+  "radio_groups": {},
+  "custom_widgets": [
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "file-upload",
+      "name": "Resume/CV*"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Resume/CV*"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachDropboxGoogle DriveEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    }
+  ]
+}

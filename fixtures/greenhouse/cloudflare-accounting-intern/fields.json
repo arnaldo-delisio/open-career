@@ -1,0 +1,584 @@
+{
+  "url": "https://job-boards.greenhouse.io/cloudflare/jobs/7902104?gh_jid=7902104",
+  "form_found": true,
+  "field_count": 37,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "first_name",
+      "autocomplete": "given-name",
+      "required": true,
+      "aria_label": "First Name",
+      "label": "First Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "last_name",
+      "autocomplete": "family-name",
+      "required": true,
+      "aria_label": "Last Name",
+      "label": "Last Name*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "email",
+      "autocomplete": "email",
+      "required": true,
+      "aria_label": "Email",
+      "label": "Email*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "country",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Country*",
+      "label": "Country*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "search",
+      "name": null,
+      "id": "iti-0__search-input",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Search",
+      "label": null,
+      "placeholder": "Search",
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "ul",
+      "type": "listbox",
+      "name": null,
+      "id": "iti-0__country-listbox",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "List of countries",
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "tel",
+      "name": null,
+      "id": "phone",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Phone",
+      "label": "Phone*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "candidate-location",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Location (City)*",
+      "label": "Location (City)*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "resume",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "file",
+      "name": null,
+      "id": "cover_letter",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Attach",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595609",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Legal Name (if different than above)",
+      "label": "Legal Name (if different than above)",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595610",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": "Would you like to include your LinkedIn profile, personal website or blog?",
+      "label": "Would you like to include your LinkedIn profile, personal website or blog?",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595611",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "How did you hear about this job?*",
+      "label": "How did you hear about this job?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595612",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Do you now or will you in the future require immigration sponsorship to work at Cloudflare?*",
+      "label": "Do you now or will you in the future require immigration sponsorship to work at Cloudflare?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "question_66595613[]",
+      "id": "question_66595613[]_709697432",
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Acknowledge/Confirm",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": true,
+      "option_label": "Acknowledge/Confirm"
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595614",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you currently enrolled in a university or program and will return to the program upon completion of internship?*",
+      "label": "Are you currently enrolled in a university or program and will return to the program upon completion of internship?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595615",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "If you are currently enrolled in a university or program, when do you expect to graduate or complete your program? (Select the closest date.)*",
+      "label": "If you are currently enrolled in a university or program, when do you expect to graduate or complete your program? (Select the closest date.)*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595616",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "If you are enrolled in university, what degree are you currently pursuing? *",
+      "label": "If you are enrolled in university, what degree are you currently pursuing? *",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595617",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "A successful internship may lead to consideration for a full-time opportunity. If you were to receive a full-time offer, when would you be available to start?*",
+      "label": "A successful internship may lead to consideration for a full-time opportunity. If you were to receive a full-time offer, when would you be available to start?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_66595618",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you currently a resident of the Greater Austin area, or do you have confirmed plans to be based there for the duration of this internship?**",
+      "label": "Are you currently a resident of the Greater Austin area, or do you have confirmed plans to be based there for the duration of this internship?**",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_68396681",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you available for a 12-week full-time (40 hours per week) internship between September - December 2026?*",
+      "label": "Are you available for a 12-week full-time (40 hours per week) internship between September - December 2026?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "question_68396682",
+      "autocomplete": "off",
+      "required": true,
+      "aria_label": "Are you able to work in our Austin office 3–5 days a week?*",
+      "label": "Are you able to work in our Austin office 3–5 days a week?*",
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": null,
+      "placeholder": null,
+      "section": "Apply for this job",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "gender",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Gender",
+      "label": "Gender",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "hispanic_ethnicity",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Are you Hispanic/Latino?",
+      "label": "Are you Hispanic/Latino?",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "veteran_status",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Veteran Status",
+      "label": "Veteran Status",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": null,
+      "id": "disability_status",
+      "autocomplete": "off",
+      "required": false,
+      "aria_label": "Disability Status",
+      "label": "Disability Status",
+      "placeholder": null,
+      "section": "Voluntary Self-Identification of Disability",
+      "value_present": false
+    }
+  ],
+  "radio_groups": {},
+  "custom_widgets": [
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": ""
+    },
+    {
+      "cls": "file-upload",
+      "name": "Resume/CV*"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Resume/CV*"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachDropboxGoogle DriveEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload",
+      "name": "Cover Letter"
+    },
+    {
+      "cls": "label upload-label",
+      "name": "Cover Letter"
+    },
+    {
+      "cls": "file-upload__wrapper",
+      "name": "AttachAttachDropboxGoogle DriveEnter manuallyEnter manuallyAccepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "file-upload__filetypes",
+      "name": "Accepted file types: pdf, doc, docx, txt, rtf"
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    },
+    {
+      "cls": "select__control--outside-label select__control remix-css-13cymwt-control",
+      "name": "Select..."
+    }
+  ]
+}

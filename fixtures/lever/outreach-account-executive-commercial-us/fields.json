@@ -1,0 +1,500 @@
+{
+  "url": "https://jobs.lever.co/outreach/a60fb104-ce93-4ba0-8763-ffb075b3eed1/apply",
+  "form_found": true,
+  "field_count": 31,
+  "fields": [
+    {
+      "tag": "input",
+      "type": "file",
+      "name": "resume",
+      "id": "resume-upload-input",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Resume/CV ✱ATTACH RESUME/CVCouldn't auto-read resume.Analyzing resume...Success!",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "name",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Full name✱",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "He/him",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "He/him"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "She/her",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "She/her"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "They/them",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "They/them"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Xe/xem",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Xe/xem"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Ze/hir",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Ze/hir"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Ey/em",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Ey/em"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Hir/hir",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Hir/hir"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Fae/faer",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Fae/faer"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Hu/hu",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Hu/hu"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "pronouns",
+      "id": "useNameOnlyPronounsOption",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Use name only",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Use name only"
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": null,
+      "id": "customPronounsOption",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Custom",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": true,
+      "option_label": "Custom"
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "pronouns",
+      "id": "customPronounsTextField",
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": null,
+      "placeholder": "Write here...",
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "email",
+      "name": "email",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Email✱",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "phone",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Phone",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "location",
+      "id": "location-input",
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Current location ✱No location found. Try entering a different locationLoading",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "org",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Current company",
+      "placeholder": null,
+      "section": "Submit your application",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "urls[LinkedIn]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "LinkedIn URL✱",
+      "placeholder": null,
+      "section": "Links",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "urls[Twitter]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Twitter URL",
+      "placeholder": null,
+      "section": "Links",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "urls[GitHub]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "GitHub URL",
+      "placeholder": null,
+      "section": "Links",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "urls[Portfolio]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Portfolio URL",
+      "placeholder": null,
+      "section": "Links",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "text",
+      "name": "urls[Other]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Other website",
+      "placeholder": null,
+      "section": "Links",
+      "value_present": false
+    },
+    {
+      "tag": "input",
+      "type": "radio",
+      "name": "cards[001326c7-6b46-464c-a794-0c3336b493b5][field0]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Yes",
+      "placeholder": null,
+      "section": "General Questions United States",
+      "value_present": true,
+      "option_label": "Yes"
+    },
+    {
+      "tag": "input",
+      "type": "radio",
+      "name": "cards[001326c7-6b46-464c-a794-0c3336b493b5][field0]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "No",
+      "placeholder": null,
+      "section": "General Questions United States",
+      "value_present": true,
+      "option_label": "No"
+    },
+    {
+      "tag": "input",
+      "type": "radio",
+      "name": "cards[001326c7-6b46-464c-a794-0c3336b493b5][field1]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "Yes",
+      "placeholder": null,
+      "section": "General Questions United States",
+      "value_present": true,
+      "option_label": "Yes"
+    },
+    {
+      "tag": "input",
+      "type": "radio",
+      "name": "cards[001326c7-6b46-464c-a794-0c3336b493b5][field1]",
+      "id": null,
+      "autocomplete": null,
+      "required": true,
+      "aria_label": null,
+      "label": "No",
+      "placeholder": null,
+      "section": "General Questions United States",
+      "value_present": true,
+      "option_label": "No"
+    },
+    {
+      "tag": "select",
+      "type": "select-one",
+      "name": "eeo[gender]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "GenderSelect ...MaleFemaleDecline to self-identify",
+      "placeholder": null,
+      "section": "U.S. Equal Employment Opportunity information (Completion is voluntary and will not subject you to adverse treatment)",
+      "value_present": false,
+      "options": [
+        "Select ...",
+        "Male",
+        "Female",
+        "Decline to self-identify"
+      ],
+      "option_count": 4
+    },
+    {
+      "tag": "select",
+      "type": "select-one",
+      "name": "eeo[race]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "RaceSelect ...Hispanic or LatinoWhite (Not Hispanic or Latino)Black or African American (Not Hispanic or Latino)Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)Asian (Not Hispanic or",
+      "placeholder": null,
+      "section": "U.S. Equal Employment Opportunity information (Completion is voluntary and will not subject you to adverse treatment)",
+      "value_present": false,
+      "options": [
+        "Select ...",
+        "Hispanic or Latino",
+        "White (Not Hispanic or Latino)",
+        "Black or African American (Not Hispanic or Latino)",
+        "Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)",
+        "Asian (Not Hispanic or Latino)",
+        "American Indian or Alaska Native (Not Hispanic or Latino)",
+        "Two or More Races (Not Hispanic or Latino)",
+        "Decline to self-identify"
+      ],
+      "option_count": 9
+    },
+    {
+      "tag": "select",
+      "type": "select-one",
+      "name": "eeo[veteran]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Veteran statusSelect ...I am a veteranI am not a veteranDecline to self-identify",
+      "placeholder": null,
+      "section": "U.S. Equal Employment Opportunity information (Completion is voluntary and will not subject you to adverse treatment)",
+      "value_present": false,
+      "options": [
+        "Select ...",
+        "I am a veteran",
+        "I am not a veteran",
+        "Decline to self-identify"
+      ],
+      "option_count": 4
+    },
+    {
+      "tag": "input",
+      "type": "checkbox",
+      "name": "consent[marketing]",
+      "id": null,
+      "autocomplete": null,
+      "required": false,
+      "aria_label": null,
+      "label": "Yes, Outreach can contact me about future job opportunities for up to 1 yearPrivacy policy",
+      "placeholder": null,
+      "section": "U.S. Equal Employment Opportunity information (Completion is voluntary and will not subject you to adverse treatment)",
+      "value_present": true,
+      "option_label": "Yes, Outreach can contact me about future job opportunities for up to 1 yearPrivacy policy"
+    }
+  ],
+  "radio_groups": {
+    "cards[001326c7-6b46-464c-a794-0c3336b493b5][field0]": [
+      "Yes",
+      "No"
+    ],
+    "cards[001326c7-6b46-464c-a794-0c3336b493b5][field1]": [
+      "Yes",
+      "No"
+    ]
+  },
+  "custom_widgets": [
+    {
+      "cls": "postings-btn template-btn-utility visible-resume-upload",
+      "name": "ATTACH RESUME/CV"
+    },
+    {
+      "cls": "application-file-input invisible-resume-upload",
+      "name": ""
+    },
+    {
+      "cls": "resume-upload-failure",
+      "name": "Couldn't auto-read resume."
+    },
+    {
+      "cls": "resume-upload-label",
+      "name": "Couldn't auto-read resume."
+    },
+    {
+      "cls": "resume-upload-working",
+      "name": "Analyzing resume..."
+    },
+    {
+      "cls": "resume-upload-label",
+      "name": "Analyzing resume..."
+    },
+    {
+      "cls": "resume-upload-success",
+      "name": "Success!"
+    },
+    {
+      "cls": "resume-upload-label",
+      "name": "Success!"
+    },
+    {
+      "cls": "resume-upload-oversize",
+      "name": "File exceeds the maximum upload size of 100MB. Please try a smaller size."
+    }
+  ]
+}
