@@ -34,3 +34,6 @@ out/
 .DS_Store
 .idea/
 .vscode/
+
+# Instance data (OC-26): personal data lives here, never tracked
+instance/
