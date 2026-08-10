@@ -7,3 +7,8 @@ Sanitization rule: captured DOMs must carry no key-shaped strings, even third-pa
 client-side ones (Greenhouse embeds its own Google Maps browser key in every page); redact
 on capture with the pattern set in this rule, currently `AIza[0-9A-Za-z_-]{35}` plus common
 token prefixes (`sk-`, `ghp_`, `AKIA`, `xox`). Personal data is prohibited outright.
+
+Governance: each fixture's meta.json is its provenance (URL, capture timestamp); fixtures
+older than ~6 months are stale for CI purposes and a refresh re-samples a subset per platform
+rather than trusting frozen DOMs. A wholesale form change on an ATS is a supported-coverage
+event, not a fixture bug.
