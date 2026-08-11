@@ -5,6 +5,9 @@ import sqlite3
 from pathlib import Path
 
 from adapters.storage.migrations import MIGRATIONS_DIR, migrate, pending_migrations
+from adapters.storage.sqlite_edges import ENTITY_TABLES
+from domain.edges import EDGE_VOCABULARY, UNKNOWN_TYPE
+from domain.profile import CANONICAL_PROFILE_FIELDS
 
 EXPORT_VERSION = 1
 
@@ -35,6 +38,45 @@ def export_db(db: Path) -> dict:
         conn.close()
 
 
+def _validate_dump_semantics(tables: dict) -> None:
+    """Import is a validated restore, not a raw load: profile fields must be in
+    the closed canonical set, and every active typed edge must satisfy the edge
+    vocabulary with its endpoints present in the dump. 'unknown'-typed edges
+    are exempt (the 0001-migration legacy lane, excluded from traversal)."""
+    for i, row in enumerate(tables.get("user_profile", [])):
+        try:
+            fields = json.loads(row.get("fields_json") or "{}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"user_profile row {i}: fields_json is not valid JSON: {e}") from e
+        if not isinstance(fields, dict):
+            raise ValueError(f"user_profile row {i}: fields_json must be a JSON object")
+        unknown = set(fields) - CANONICAL_PROFILE_FIELDS
+        if unknown:
+            raise ValueError(f"user_profile row {i}: unknown profile fields {sorted(unknown)}")
+
+    dump_ids = {entity_type: {r.get("id") for r in tables.get(table, [])}
+                for entity_type, table in ENTITY_TABLES.items()}
+    for i, row in enumerate(tables.get("career_edges", [])):
+        if row.get("superseded_at") is not None:
+            continue
+        source_type, target_type = row.get("source_type"), row.get("target_type")
+        if UNKNOWN_TYPE in (source_type, target_type):
+            continue
+        edge_type = row.get("edge_type")
+        expected = EDGE_VOCABULARY.get(edge_type)
+        if expected is None:
+            raise ValueError(f"career_edges row {i}: unknown edge_type '{edge_type}'")
+        if (source_type, target_type) != expected:
+            raise ValueError(
+                f"career_edges row {i}: {edge_type} requires {expected[0]} -> {expected[1]},"
+                f" got {source_type} -> {target_type}")
+        for role, entity_type, entity_id in (("source", source_type, row.get("source_id")),
+                                             ("target", target_type, row.get("target_id"))):
+            if entity_id not in dump_ids[entity_type]:
+                raise ValueError(
+                    f"career_edges row {i}: {role} {entity_type} '{entity_id}' not in dump")
+
+
 def import_db(db: Path, dump: dict) -> None:
     """Load a dump into a database. A structurally invalid dump is rejected
     before the database is touched; a valid-looking dump first migrates the
@@ -55,6 +97,7 @@ def import_db(db: Path, dump: dict) -> None:
     try:
         migrate(db)
         conn = sqlite3.connect(db)
+        conn.execute("PRAGMA foreign_keys = ON")
     except sqlite3.Error as e:
         raise ValueError(f"cannot open instance database: {e}") from e
     try:
@@ -77,9 +120,13 @@ def import_db(db: Path, dump: dict) -> None:
                         raise ValueError(f"table '{table}' row {i}: unknown columns {sorted(bad)}")
         except sqlite3.Error as e:
             raise ValueError(f"reading instance schema failed: {e}") from e
+        _validate_dump_semantics(tables)
         current_table = None
         try:
             with conn:  # one transaction: a failure anywhere rolls the whole load back
+                # Load order follows the dump, so FK checks defer to the end of
+                # the transaction and are verified explicitly before commit.
+                conn.execute("PRAGMA defer_foreign_keys = ON")
                 for table, rows in tables.items():
                     current_table = table
                     conn.execute(f'DELETE FROM "{table}"')
@@ -91,6 +138,11 @@ def import_db(db: Path, dump: dict) -> None:
                             f'INSERT INTO "{table}" ({col_list}) VALUES ({placeholders})',
                             [row[c] for c in cols],
                         )
+                violation = conn.execute("PRAGMA foreign_key_check").fetchone()
+                if violation:
+                    raise ValueError(
+                        f"foreign key violation in table '{violation[0]}':"
+                        f" a row references a missing {violation[2]} row")
         except sqlite3.Error as e:
             raise ValueError(f"loading table '{current_table}' failed: {e}") from e
     finally:

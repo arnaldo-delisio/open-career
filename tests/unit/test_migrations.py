@@ -5,24 +5,106 @@ import pytest
 from adapters.storage.migrations import MIGRATIONS_DIR, _resolve_migrations_dir, migrate
 
 
-def test_migrate_applies_0001_and_records_version(tmp_path):
+EXPECTED_TABLES = {
+    "career_edges", "experiences", "career_facts", "evidence", "capabilities",
+    "role_families", "career_goals", "strategy_versions",
+    "strategy_role_family_allocations", "user_profile", "profile_field_writes",
+}
+
+
+def test_fresh_init_applies_0001_and_0002(tmp_path):
     db = tmp_path / "test.sqlite3"
     applied = migrate(db)
-    assert applied == ["0001"]
+    assert applied == ["0001", "0002"]
     conn = sqlite3.connect(db)
     try:
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_migrations")]
-        assert versions == ["0001"]
+        assert versions == ["0001", "0002"]
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        assert "career_edges" in tables
+        assert EXPECTED_TABLES <= tables
+        assert "career_edges_0001" not in tables
+        assert "_0002_conversion_check" not in tables
+        indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert {"idx_career_edges_active_unique", "idx_career_edges_active_by_target",
+                "idx_career_edges_active_by_source"} <= indexes
     finally:
         conn.close()
 
 
 def test_migrate_is_idempotent(tmp_path):
     db = tmp_path / "test.sqlite3"
-    assert migrate(db) == ["0001"]
+    assert migrate(db) == ["0001", "0002"]
     assert migrate(db) == []
+
+
+def _only_0001_dir(tmp_path):
+    d = tmp_path / "only-0001"
+    d.mkdir()
+    src = next(MIGRATIONS_DIR.glob("0001_*.sql"))
+    (d / src.name).write_text(src.read_text())
+    return d
+
+
+def test_0002_converts_legacy_edges_preserving_data(tmp_path):
+    """0001 -> 0002 on a database holding hand-imported edges: every row is
+    carried into the new shape (edge_ ids, source -> provenance, endpoint types
+    'unknown', created_by 'import', unverified), count-validated."""
+    db = tmp_path / "legacy.sqlite3"
+    assert migrate(db, migrations_dir=_only_0001_dir(tmp_path), backups_dir=tmp_path / "backups") == ["0001"]
+    conn = sqlite3.connect(db)
+    with conn:
+        conn.execute(
+            "INSERT INTO career_edges (id, source_id, target_id, edge_type, claim_kind, source, created_at)"
+            " VALUES (7, 'ev_a', 'cap_b', 'demonstrates', 'fact', 'hand-import', '2026-08-09T00:00:00Z')")
+        conn.execute(
+            "INSERT INTO career_edges (source_id, target_id, edge_type, claim_kind, source)"
+            " VALUES ('cap_b', 'req_c', 'satisfies', 'inference', 'matcher-run-1')")
+    conn.close()
+
+    assert migrate(db, backups_dir=tmp_path / "backups") == ["0002"]
+
+    conn = sqlite3.connect(db)
+    try:
+        rows = conn.execute(
+            "SELECT id, source_type, source_id, edge_type, target_type, target_id,"
+            " claim_kind, provenance, created_by, user_verified, created_at, superseded_at"
+            " FROM career_edges ORDER BY id").fetchall()
+        assert len(rows) == 2  # count preserved
+        first = rows[0]
+        assert first == ("edge_7", "unknown", "ev_a", "demonstrates", "unknown", "cap_b",
+                         "fact", "hand-import", "import", 0, "2026-08-09T00:00:00Z", None)
+        second = rows[1]
+        assert second[0].startswith("edge_")
+        assert (second[1], second[4]) == ("unknown", "unknown")
+        assert second[6:10] == ("inference", "matcher-run-1", "import", 0)
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "career_edges_0001" not in tables
+    finally:
+        conn.close()
+
+
+def test_0002_active_edge_uniqueness_is_partial(tmp_path):
+    """The unique index binds only active edges: a superseded copy may coexist
+    with a new active edge on the same logical tuple."""
+    db = tmp_path / "test.sqlite3"
+    migrate(db)
+    conn = sqlite3.connect(db)
+    try:
+        with conn:
+            conn.execute("INSERT INTO evidence (id, evidence_type, title) VALUES ('ev_1', 'cv', 't')")
+            conn.execute(
+                "INSERT INTO capabilities (id, name, strength) VALUES ('cap_1', 'python', 'strong')")
+            base = ("INSERT INTO career_edges (id, source_type, source_id, edge_type, target_type,"
+                    " target_id, claim_kind, provenance, created_by, user_verified, superseded_at)"
+                    " VALUES (?, 'evidence', 'ev_1', 'SUPPORTS', 'capability', 'cap_1',"
+                    " 'fact', 'test', 'user', 1, ?)")
+            conn.execute(base, ("edge_a", "2026-08-10T00:00:00Z"))  # superseded
+            conn.execute(base, ("edge_b", None))  # active
+        with pytest.raises(sqlite3.IntegrityError):
+            with conn:
+                conn.execute(base, ("edge_c", None))  # second active duplicate
+    finally:
+        conn.close()
 
 
 def test_no_backup_on_fresh_database(tmp_path):
@@ -40,8 +122,7 @@ def test_backup_taken_before_upgrading_existing_db(tmp_path):
     conn = sqlite3.connect(db)
     with conn:
         conn.execute(
-            "INSERT INTO career_edges (source_id, target_id, edge_type, claim_kind, source)"
-            " VALUES ('a', 'b', 'demonstrates', 'fact', 'test')"
+            "INSERT INTO evidence (id, evidence_type, title) VALUES ('ev_1', 'cv', 'cv.txt')"
         )
     conn.close()
 
@@ -49,10 +130,10 @@ def test_backup_taken_before_upgrading_existing_db(tmp_path):
     extra_dir.mkdir()
     for f in MIGRATIONS_DIR.glob("[0-9]*.sql"):
         (extra_dir / f.name).write_text(f.read_text())
-    (extra_dir / "0002_noop.sql").write_text("CREATE TABLE noop_probe (id INTEGER PRIMARY KEY);")
+    (extra_dir / "0003_noop.sql").write_text("CREATE TABLE noop_probe (id INTEGER PRIMARY KEY);")
 
     applied = migrate(db, migrations_dir=extra_dir, backups_dir=backups)
-    assert applied == ["0002"]
+    assert applied == ["0003"]
 
     backup_files = list(backups.iterdir())
     assert len(backup_files) == 1
@@ -60,7 +141,7 @@ def test_backup_taken_before_upgrading_existing_db(tmp_path):
     bconn = sqlite3.connect(backup_files[0])
     try:
         assert bconn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert bconn.execute("SELECT COUNT(*) FROM career_edges").fetchone()[0] == 1
+        assert bconn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 1
         tables = {r[0] for r in bconn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert "noop_probe" not in tables
     finally:
@@ -153,7 +234,7 @@ def test_legacy_db_backup_is_a_pre_write_snapshot(tmp_path):
     conn.close()
 
     backups = tmp_path / "backups"
-    assert migrate(db, backups_dir=backups) == ["0001"]
+    assert migrate(db, backups_dir=backups) == ["0001", "0002"]
 
     backup_files = list(backups.iterdir())
     assert len(backup_files) == 1

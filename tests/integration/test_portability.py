@@ -1,21 +1,66 @@
+import json
 import sqlite3
 
 import pytest
 
 from adapters.storage.migrations import migrate
-from adapters.storage.portability import export_to_file, import_db, import_from_file
+from adapters.storage.portability import export_db, export_to_file, import_db, import_from_file
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from domain.edges import CareerEdge
+
+ALL_TABLES = {
+    "career_edges", "experiences", "career_facts", "evidence", "capabilities",
+    "role_families", "career_goals", "strategy_versions",
+    "strategy_role_family_allocations", "user_profile", "profile_field_writes",
+}
+
+
+def _seed(conn: sqlite3.Connection) -> list[CareerEdge]:
+    """Endpoints plus one valid edge, through the repository boundary."""
+    with conn:
+        conn.execute("INSERT INTO evidence (id, evidence_type, title) VALUES ('ev_1', 'cv', 'cv.txt')")
+        conn.execute("INSERT INTO capabilities (id, name, strength) VALUES ('cap_1', 'python', 'strong')")
+    repo = SqliteCareerEdgeRepository(conn)
+    repo.add(CareerEdge(
+        id="edge_1", source_type="evidence", source_id="ev_1", edge_type="SUPPORTS",
+        target_type="capability", target_id="cap_1", claim_kind="fact",
+        provenance="user", created_by="user", user_verified=1,
+    ))
+    return repo.list_all()
+
+
+def _full_dump(**table_overrides) -> dict:
+    tables = {t: [] for t in ALL_TABLES}
+    tables.update(table_overrides)
+    return {"format": "open-career-export", "version": 1, "tables": tables}
+
+
+_ENDPOINT_ROWS = dict(
+    evidence=[{"id": "ev_1", "evidence_type": "cv", "title": "t", "locator": None,
+               "content_hash": None, "notes": None, "created_at": "2026-08-11T00:00:00Z"}],
+    capabilities=[{"id": "cap_1", "name": "python", "strength": "strong", "description": None,
+                   "last_assessed_at": None, "created_at": "2026-08-11T00:00:00Z",
+                   "updated_at": None}],
+)
+
+
+def _edge_row(**overrides):
+    row = {
+        "id": "edge_x", "source_type": "evidence", "source_id": "ev_1",
+        "edge_type": "SUPPORTS", "target_type": "capability", "target_id": "cap_1",
+        "claim_kind": "fact", "confidence": None, "provenance": "user",
+        "derived_from_fact_id": None, "created_by": "user", "user_verified": 1,
+        "created_at": "2026-08-10T00:00:00Z", "superseded_at": None,
+    }
+    row.update(overrides)
+    return row
 
 
 def test_export_import_roundtrip(tmp_path):
     src_db = tmp_path / "src.sqlite3"
     migrate(src_db)
     conn = sqlite3.connect(src_db)
-    repo = SqliteCareerEdgeRepository(conn)
-    repo.add(CareerEdge("evidence:1", "capability:python", "demonstrates", "fact", "user"))
-    repo.add(CareerEdge("capability:python", "requirement:backend", "satisfies", "inference", "matcher"))
-    original = repo.list_all()
+    original = _seed(conn)
     conn.close()
 
     dump_file = tmp_path / "dump.json"
@@ -26,8 +71,17 @@ def test_export_import_roundtrip(tmp_path):
 
     conn2 = sqlite3.connect(dst_db)
     restored = SqliteCareerEdgeRepository(conn2).list_all()
+    evidence_count = conn2.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
     conn2.close()
     assert restored == original
+    assert evidence_count == 1
+
+
+def test_export_covers_the_exact_current_table_set(tmp_path):
+    db = tmp_path / "src.sqlite3"
+    migrate(db)
+    dump = export_db(db)
+    assert set(dump["tables"]) == ALL_TABLES
 
 
 def test_export_requires_initialized_instance(tmp_path):
@@ -57,6 +111,15 @@ def test_import_rejects_empty_tables(tmp_path):
         import_db(db, {"format": "open-career-export", "version": 1, "tables": {}})
 
 
+def test_import_rejects_partial_table_set(tmp_path):
+    """The exact-table-set validation covers the 0002 tables: a dump carrying
+    only career_edges is rejected, naming what is missing."""
+    db = tmp_path / "dst.sqlite3"
+    dump = {"format": "open-career-export", "version": 1, "tables": {"career_edges": []}}
+    with pytest.raises(ValueError, match="missing tables.*capabilities"):
+        import_db(db, dump)
+
+
 def test_import_rejects_unsupported_version(tmp_path):
     db = tmp_path / "dst.sqlite3"
     with pytest.raises(ValueError, match="unsupported export version"):
@@ -65,13 +128,8 @@ def test_import_rejects_unsupported_version(tmp_path):
 
 def test_import_rejects_unknown_table(tmp_path):
     db = tmp_path / "dst.sqlite3"
-    dump = {
-        "format": "open-career-export",
-        "version": 1,
-        "tables": {"career_edges": [], "surprise": []},
-    }
     with pytest.raises(ValueError, match="unknown tables"):
-        import_db(db, dump)
+        import_db(db, _full_dump(surprise=[]))
 
 
 def test_import_missing_file_is_clean_error_and_exit_1(tmp_path, monkeypatch, capsys):
@@ -90,41 +148,18 @@ def test_import_missing_file_is_clean_error_and_exit_1(tmp_path, monkeypatch, ca
 
 
 def test_import_rejects_non_list_table_value(tmp_path):
-    dump = {"format": "open-career-export", "version": 1, "tables": {"career_edges": "garbage"}}
     with pytest.raises(ValueError, match="must be a list of row objects"):
-        import_db(tmp_path / "db.sqlite3", dump)
+        import_db(tmp_path / "db.sqlite3", _full_dump(career_edges="garbage"))
 
 
 def test_import_rejects_unknown_column(tmp_path):
-    dump = {
-        "format": "open-career-export",
-        "version": 1,
-        "tables": {"career_edges": [{"source_id": "a", "surprise_col": 1}]},
-    }
+    dump = _full_dump(career_edges=[{"source_id": "a", "surprise_col": 1}])
     with pytest.raises(ValueError, match=r"row 0: unknown columns \['surprise_col'\]"):
         import_db(tmp_path / "db.sqlite3", dump)
 
 
-def _edge_row(**overrides):
-    row = {
-        "id": None,
-        "source_id": "a",
-        "target_id": "b",
-        "edge_type": "demonstrates",
-        "claim_kind": "fact",
-        "source": "user",
-        "created_at": "2026-08-10T00:00:00Z",
-    }
-    row.update(overrides)
-    return row
-
-
 def test_import_check_violation_is_clean_error(tmp_path):
-    dump = {
-        "format": "open-career-export",
-        "version": 1,
-        "tables": {"career_edges": [_edge_row(claim_kind="stated")]},
-    }
+    dump = _full_dump(career_edges=[_edge_row(claim_kind="stated")], **_ENDPOINT_ROWS)
     with pytest.raises(ValueError, match="loading table 'career_edges' failed: CHECK constraint"):
         import_db(tmp_path / "db.sqlite3", dump)
 
@@ -133,21 +168,13 @@ def test_failed_import_leaves_db_unchanged(tmp_path):
     db = tmp_path / "db.sqlite3"
     migrate(db)
     conn = sqlite3.connect(db)
-    SqliteCareerEdgeRepository(conn).add(
-        CareerEdge("keep:1", "keep:2", "demonstrates", "fact", "user")
-    )
+    _seed(conn)
     conn.close()
 
-    dump = {
-        "format": "open-career-export",
-        "version": 1,
-        "tables": {
-            "career_edges": [
-                _edge_row(id=10),
-                _edge_row(id=11, claim_kind="stated"),  # last row violates the CHECK
-            ]
-        },
-    }
+    dump = _full_dump(career_edges=[
+        _edge_row(id="edge_10"),
+        _edge_row(id="edge_11", claim_kind="stated"),  # last row violates the CHECK
+    ], **_ENDPOINT_ROWS)
     with pytest.raises(ValueError, match="loading table 'career_edges' failed"):
         import_db(db, dump)
 
@@ -155,7 +182,7 @@ def test_failed_import_leaves_db_unchanged(tmp_path):
     rows = SqliteCareerEdgeRepository(conn).list_all()
     conn.close()
     assert len(rows) == 1
-    assert rows[0].source_id == "keep:1"  # pre-import state intact, nothing deleted
+    assert rows[0].id == "edge_1"  # pre-import state intact, nothing deleted
 
 
 def test_invalid_dump_leaves_legacy_db_untouched(tmp_path):
@@ -188,7 +215,7 @@ def test_corrupt_target_db_is_clean_cli_error(tmp_path, monkeypatch, capsys):
     instance.mkdir()
     (instance / "open-career.sqlite3").write_bytes(b"this is not a sqlite database")
     dump_file = tmp_path / "dump.json"
-    dump_file.write_text('{"format": "open-career-export", "version": 1, "tables": {"career_edges": []}}')
+    dump_file.write_text(json.dumps(_full_dump()))
 
     from apps.cli.main import main
 
@@ -216,13 +243,62 @@ def test_non_object_top_level_is_clean_cli_error(tmp_path, monkeypatch, capsys):
     assert "Traceback" not in err
 
 
+def test_import_rejects_unknown_profile_field(tmp_path):
+    """Import is a validated restore: a profile document carrying a field
+    outside the closed canonical set (OC-29) is rejected."""
+    dump = _full_dump(user_profile=[
+        {"id": 1, "fields_json": json.dumps({"full_name": "Jane", "favourite_color": "blue"}),
+         "updated_at": "2026-08-11T00:00:00Z"}])
+    with pytest.raises(ValueError, match=r"unknown profile fields \['favourite_color'\]"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+def test_import_rejects_bogus_edge_type(tmp_path):
+    dump = _full_dump(career_edges=[_edge_row(edge_type="FABRICATES")], **_ENDPOINT_ROWS)
+    with pytest.raises(ValueError, match="unknown edge_type 'FABRICATES'"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+def test_import_rejects_edge_with_endpoint_missing_from_dump(tmp_path):
+    dump = _full_dump(career_edges=[_edge_row()])  # ev_1/cap_1 rows absent
+    with pytest.raises(ValueError, match="source evidence 'ev_1' not in dump"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+def test_import_exempts_unknown_typed_legacy_edges(tmp_path):
+    """'unknown'-typed rows are the 0001-migration legacy lane: they load even
+    though their endpoints are untyped ids with no entity rows."""
+    dump = _full_dump(career_edges=[_edge_row(
+        source_type="unknown", target_type="unknown", edge_type="demonstrates",
+        created_by="import", user_verified=0)])
+    db = tmp_path / "db.sqlite3"
+    import_db(db, dump)  # must not raise
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM career_edges").fetchone()[0] == 1
+    conn.close()
+
+
+def test_import_rejects_dangling_experience_fk(tmp_path):
+    """Foreign keys are checked before commit: a career_facts row referencing a
+    missing experience is a one-line error, nothing loaded."""
+    dump = _full_dump(career_facts=[{
+        "id": "fact_1", "experience_id": "exp_missing", "fact_type": "achievement",
+        "statement": "s", "status": "active", "confidence": None, "source": "import",
+        "source_location": None, "user_approved": 1,
+        "created_at": "2026-08-11T00:00:00Z", "verified_at": None}])
+    db = tmp_path / "db.sqlite3"
+    with pytest.raises(ValueError, match="foreign key violation in table 'career_facts'"):
+        import_db(db, dump)
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT COUNT(*) FROM career_facts").fetchone()[0] == 0
+    conn.close()
+
+
 def test_import_into_populated_db_fully_replaces(tmp_path):
     src_db = tmp_path / "src.sqlite3"
     migrate(src_db)
     conn = sqlite3.connect(src_db)
-    SqliteCareerEdgeRepository(conn).add(
-        CareerEdge("evidence:1", "capability:python", "demonstrates", "fact", "user")
-    )
+    _seed(conn)
     conn.close()
     dump_file = tmp_path / "dump.json"
     export_to_file(src_db, dump_file)
@@ -230,15 +306,16 @@ def test_import_into_populated_db_fully_replaces(tmp_path):
     dst_db = tmp_path / "dst.sqlite3"
     migrate(dst_db)
     conn = sqlite3.connect(dst_db)
-    repo = SqliteCareerEdgeRepository(conn)
-    repo.add(CareerEdge("old:1", "old:2", "stale", "inference", "old-run"))
-    repo.add(CareerEdge("old:3", "old:4", "stale", "inference", "old-run"))
+    with conn:
+        conn.execute("INSERT INTO evidence (id, evidence_type, title) VALUES ('ev_old', 'cv', 'old.txt')")
+        conn.execute("INSERT INTO career_goals (id, statement, horizon) VALUES ('goal_old', 'stale', 'near')")
     conn.close()
 
     import_from_file(dst_db, dump_file)
 
     conn = sqlite3.connect(dst_db)
-    restored = SqliteCareerEdgeRepository(conn).list_all()
+    evidence_ids = [r[0] for r in conn.execute("SELECT id FROM evidence")]
+    goal_count = conn.execute("SELECT COUNT(*) FROM career_goals").fetchone()[0]
     conn.close()
-    assert len(restored) == 1
-    assert restored[0].source_id == "evidence:1"
+    assert evidence_ids == ["ev_1"]  # old contents fully replaced
+    assert goal_count == 0

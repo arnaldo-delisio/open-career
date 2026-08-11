@@ -1,4 +1,4 @@
-"""open-career CLI: init, migrate, export, import.
+"""open-career CLI: init, migrate, onboard, profile, edges, export, import.
 
 Instance data lives under $OPEN_CAREER_INSTANCE (default ./instance) and is
 never tracked (OC-26).
@@ -6,12 +6,30 @@ never tracked (OC-26).
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
+from adapters.models.claude_code import ClaudeCodeAdapter, ModelCallError
 from adapters.storage.instance import backups_dir, db_path, instance_dir
+from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import migrate
 from adapters.storage.portability import export_to_file, import_from_file
+from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
+from adapters.storage.sqlite_profile import SqliteUserProfileRepository
+from apps.cli.onboarding import run_onboarding
+from domain.ports import ModelUnavailableError
+from domain.profile import UnknownProfileFieldError
+
+
+def _connect() -> sqlite3.Connection:
+    path = db_path()
+    if not path.exists():
+        print("instance not initialized (run: open-career init)", file=sys.stderr)
+        raise SystemExit(1)
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
 
 def cmd_init(_args: argparse.Namespace) -> None:
@@ -47,12 +65,85 @@ def cmd_import(args: argparse.Namespace) -> None:
     print(f"imported from {src}")
 
 
+def cmd_onboard(args: argparse.Namespace) -> None:
+    cv_path = Path(args.cv) if args.cv else None
+    if cv_path is not None and not cv_path.exists():
+        print(f"CV file not found: {cv_path}", file=sys.stderr)
+        raise SystemExit(1)
+    conn = _connect()
+    storage = LocalStorageAdapter(instance_dir())
+    try:
+        model = ClaudeCodeAdapter() if cv_path is not None else None
+        try:
+            run_onboarding(conn, storage, model, cv_path)
+        except (ModelCallError, ModelUnavailableError) as e:
+            # A failed or unavailable model is not a dead backend: inform, then
+            # degrade to the same interview questions the no-CV path runs.
+            # (ModelUnavailableError's own message names the missing claude CLI
+            # and how to get it.)
+            print(f"CV extraction failed: {e}", file=sys.stderr)
+            print("Continuing without the CV; you can re-run onboarding later.")
+            run_onboarding(conn, storage, None, None)
+    except ValueError as e:
+        print(f"onboarding failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+
+
+def cmd_profile_set(args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        SqliteUserProfileRepository(conn).set_field(args.field, args.value, source="user_edit")
+    except UnknownProfileFieldError as e:
+        print(f"profile set failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    print(f"profile.{args.field} set")
+
+
+def cmd_edges_list(args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        repo = SqliteCareerEdgeRepository(conn)
+        edges = repo.list_untyped() if args.untyped else repo.list_all()
+    finally:
+        conn.close()
+    if args.untyped and not edges:
+        print("no untyped edges (nothing awaiting re-typing)")
+        return
+    for e in edges:
+        print(f"{e.id}  {e.source_type}:{e.source_id} -{e.edge_type}-> "
+              f"{e.target_type}:{e.target_id}  claim={e.claim_kind}"
+              f" created_by={e.created_by} verified={e.user_verified}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="open-career")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("init", help="create the instance directory and run migrations").set_defaults(func=cmd_init)
     sub.add_parser("migrate", help="apply pending migrations (backs up first)").set_defaults(func=cmd_migrate)
+
+    p_onboard = sub.add_parser(
+        "onboard", help="CV-first onboarding: extraction drafts, you confirm; then gap questions")
+    p_onboard.add_argument("cv", nargs="?", default=None, help="optional CV text file")
+    p_onboard.set_defaults(func=cmd_onboard)
+
+    p_profile = sub.add_parser("profile", help="canonical profile fields (closed set, audited writes)")
+    profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)
+    p_profile_set = profile_sub.add_parser("set", help="set one canonical field")
+    p_profile_set.add_argument("field")
+    p_profile_set.add_argument("value")
+    p_profile_set.set_defaults(func=cmd_profile_set)
+
+    p_edges = sub.add_parser("edges", help="career graph edges")
+    edges_sub = p_edges.add_subparsers(dest="edges_command", required=True)
+    p_edges_list = edges_sub.add_parser("list", help="list edges")
+    p_edges_list.add_argument("--untyped", action="store_true",
+                              help="only migrated edges with 'unknown' endpoint types")
+    p_edges_list.set_defaults(func=cmd_edges_list)
 
     p_export = sub.add_parser("export", help="dump the instance database to JSON")
     p_export.add_argument("file", help="output JSON file")
