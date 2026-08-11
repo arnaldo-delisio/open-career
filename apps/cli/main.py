@@ -17,7 +17,7 @@ from adapters.storage.migrations import migrate
 from adapters.storage.portability import export_to_file, import_from_file
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
-from apps.cli.onboarding import run_onboarding
+from apps.cli.onboarding import CvReadError, run_onboarding
 from domain.ports import ModelUnavailableError
 from adapters.storage.sqlite_entities import (
     SqliteCapabilityRepository,
@@ -82,7 +82,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         model = ClaudeCodeAdapter() if cv_path is not None else None
         try:
             run_onboarding(conn, storage, model, cv_path)
-        except (ModelCallError, ModelUnavailableError) as e:
+        except (ModelCallError, ModelUnavailableError, CvReadError) as e:
             # A failed or unavailable model is not a dead backend: inform, then
             # degrade to the same interview questions the no-CV path runs.
             # (ModelUnavailableError's own message names the missing claude CLI

@@ -158,6 +158,9 @@ class StorageAdapter(ABC):
     def write_text(self, relative_path: str, content: str) -> None: ...
 
     @abstractmethod
+    def write_bytes(self, relative_path: str, content: bytes) -> None: ...
+
+    @abstractmethod
     def exists(self, relative_path: str) -> bool: ...
 
 

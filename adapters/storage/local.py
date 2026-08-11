@@ -23,5 +23,10 @@ class LocalStorageAdapter(StorageAdapter):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
 
+    def write_bytes(self, relative_path: str, content: bytes) -> None:
+        path = self._resolve(relative_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+
     def exists(self, relative_path: str) -> bool:
         return self._resolve(relative_path).exists()

@@ -9,6 +9,7 @@ through the ask/say seams so tests drive the flow with scripted answers.
 
 import hashlib
 import sqlite3
+import subprocess
 import time
 from pathlib import Path
 from typing import Callable
@@ -29,6 +30,11 @@ from domain.ids import new_id
 from domain.ports import ModelAdapter, StorageAdapter
 from domain.profile import InvalidProfileValueError
 from prompts import load_prompt
+
+class CvReadError(RuntimeError):
+    """The CV file's text could not be extracted (e.g. a PDF with no
+    pdftotext available). Callers degrade like other extraction failures."""
+
 
 _STRENGTHS = ("none", "weak", "moderate", "strong")
 _HORIZONS = ("near", "mid", "long")
@@ -73,22 +79,47 @@ def run_onboarding(conn: sqlite3.Connection, storage: StorageAdapter,
     say("Onboarding complete.")
 
 
+def _read_cv_text(cv_path: Path, cv_bytes: bytes) -> str:
+    """Plain text reads directly; a PDF (by suffix or %PDF magic) goes through
+    the pdftotext binary. Failure is a CvReadError with an actionable message."""
+    if cv_path.suffix.lower() != ".pdf" and not cv_bytes.startswith(b"%PDF"):
+        return cv_bytes.decode()
+    try:
+        proc = subprocess.run(["pdftotext", str(cv_path), "-"], capture_output=True)
+    except FileNotFoundError as e:
+        raise CvReadError(
+            "pdftotext not found; install poppler-utils, or supply a text CV") from e
+    try:
+        # pdftotext emits UTF-8 by default; decode explicitly (never the process
+        # locale) so stray bytes become replacement characters, not a crash.
+        text = proc.stdout.decode("utf-8", errors="replace")
+    except Exception as e:
+        raise CvReadError(
+            f"pdftotext output from {cv_path.name} could not be decoded; supply a text CV") from e
+    if proc.returncode != 0 or not text.strip():
+        raise CvReadError(
+            f"pdftotext extracted no text from {cv_path.name}; supply a text CV")
+    return text
+
+
 def _ingest_cv(conn: sqlite3.Connection, storage: StorageAdapter, model: ModelAdapter,
                cv_path: Path, say: Callable[[str], None]) -> tuple[Evidence, CvExtraction]:
     """Store the CV file, mint its evidence row, run extraction. Nothing the
     model drafted is persisted here: experiences and facts land only through
     the interactive review."""
-    cv_text = cv_path.read_text()
+    cv_bytes = cv_path.read_bytes()
+    cv_text = _read_cv_text(cv_path, cv_bytes)  # may raise CvReadError: degrade before storing
     evidence_id = new_id("ev")
     # Locator derives from the evidence id, not the original basename: a later
     # upload named the same can never overwrite an earlier file out from under
-    # its evidence row's hash. The original filename stays in the title.
+    # its evidence row's hash. The original filename stays in the title. The
+    # stored file and its hash are always the original bytes (a PDF stays a PDF).
     locator = f"files/cv/{evidence_id}{cv_path.suffix}"
-    storage.write_text(locator, cv_text)
+    storage.write_bytes(locator, cv_bytes)
     evidence_repo = SqliteEvidenceRepository(conn)
     cv_evidence = Evidence(
         id=evidence_id, evidence_type="cv", title=cv_path.name, locator=locator,
-        content_hash=hashlib.sha256(cv_text.encode()).hexdigest(),
+        content_hash=hashlib.sha256(cv_bytes).hexdigest(),
     )
     evidence_repo.add(cv_evidence)
 

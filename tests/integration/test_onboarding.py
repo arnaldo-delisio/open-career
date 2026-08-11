@@ -4,6 +4,7 @@
 import hashlib
 import json
 import sqlite3
+import subprocess
 
 import pytest
 
@@ -18,6 +19,7 @@ from adapters.storage.sqlite_entities import (
     SqliteExperienceRepository,
 )
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
+from apps.cli.main import main
 from apps.cli.onboarding import run_onboarding
 from domain.ports import ModelAdapter
 
@@ -189,6 +191,133 @@ def test_onboarding_without_cv_degrades_to_questions(instance):
         conn.close()
 
 
+PDF_BYTES = b"%PDF-1.4 fake pdf body with binary \x00\x80 bytes"
+
+
+def test_onboarding_with_pdf_cv_extracts_via_pdftotext(instance, tmp_path, monkeypatch):
+    """A PDF CV goes through pdftotext (faked here); the stored evidence file
+    and its hash are the original PDF bytes, extraction sees the text."""
+    cv = tmp_path / "cv.pdf"
+    cv.write_bytes(PDF_BYTES)
+
+    def fake_pdftotext(argv, capture_output=None):
+        assert argv == ["pdftotext", str(cv), "-"]
+        return subprocess.CompletedProcess(argv, 0, stdout=b"Jane Placeholder\nBackend text\n", stderr=b"")
+
+    monkeypatch.setattr("apps.cli.onboarding.subprocess.run", fake_pdftotext)
+
+    seen_prompts = []
+
+    class CapturingModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            seen_prompts.append(prompt)
+            return EXTRACTION
+
+    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", ""]
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), CapturingModel(), cv,
+                       ask=_scripted(answers), say=lambda _: None)
+        assert "Backend text" in seen_prompts[0]  # extraction got the pdftotext output
+        evidence = SqliteEvidenceRepository(conn).list_all()
+        assert evidence[0].locator.endswith(".pdf")
+        stored = (instance / evidence[0].locator).read_bytes()
+        assert stored == PDF_BYTES  # original bytes, not extracted text
+        assert evidence[0].content_hash == hashlib.sha256(PDF_BYTES).hexdigest()
+    finally:
+        conn.close()
+
+
+def test_cli_onboard_degrades_when_pdftotext_is_absent(tmp_path, monkeypatch, capsys):
+    instance = tmp_path / "instance"
+    migrate(instance / "open-career.sqlite3")
+    cv = tmp_path / "cv.pdf"
+    cv.write_bytes(PDF_BYTES)
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
+
+    def raising_run(argv, capture_output=None):
+        raise FileNotFoundError("pdftotext")
+
+    monkeypatch.setattr("apps.cli.onboarding.subprocess.run", raising_run)
+    answers = iter(["", "", "", "", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    main(["onboard", str(cv)])  # must not raise SystemExit
+
+    captured = capsys.readouterr()
+    assert "pdftotext not found; install poppler-utils, or supply a text CV" in captured.err
+    assert "Continuing without the CV" in captured.out
+    assert "Onboarding complete." in captured.out
+    # Degraded before storing: no evidence row, no stored file.
+    conn = _conn(instance)
+    try:
+        assert SqliteEvidenceRepository(conn).list_all() == []
+    finally:
+        conn.close()
+    assert not (instance / "files").exists()
+
+
+def test_invalid_utf8_pdftotext_output_is_replaced_not_a_crash(instance, tmp_path, monkeypatch):
+    """Stray non-UTF-8 bytes in pdftotext output become replacement characters
+    and extraction proceeds; no locale-dependent UnicodeDecodeError escapes."""
+    cv = tmp_path / "cv.pdf"
+    cv.write_bytes(PDF_BYTES)
+    monkeypatch.setattr(
+        "apps.cli.onboarding.subprocess.run",
+        lambda argv, capture_output=None: subprocess.CompletedProcess(
+            argv, 0, stdout=b"Jane\xff\xfe Placeholder\n", stderr=b""))
+
+    seen_prompts = []
+
+    class CapturingModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            seen_prompts.append(prompt)
+            return EXTRACTION
+
+    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", ""]
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), CapturingModel(), cv,
+                       ask=_scripted(answers), say=lambda _: None)
+        assert "Jane�� Placeholder" in seen_prompts[0]
+    finally:
+        conn.close()
+
+
+def test_cli_onboard_degrades_when_pdftotext_output_is_undecodable(tmp_path, monkeypatch, capsys):
+    """A residual decode failure is wrapped as CvReadError and degrades
+    cleanly, before any storage write."""
+    instance = tmp_path / "instance"
+    migrate(instance / "open-career.sqlite3")
+    cv = tmp_path / "cv.pdf"
+    cv.write_bytes(PDF_BYTES)
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
+
+    class Undecodable:
+        def decode(self, *args, **kwargs):
+            raise UnicodeDecodeError("utf-8", b"", 0, 1, "simulated residual failure")
+
+    monkeypatch.setattr(
+        "apps.cli.onboarding.subprocess.run",
+        lambda argv, capture_output=None: subprocess.CompletedProcess(
+            argv, 0, stdout=Undecodable(), stderr=b""))
+    answers = iter(["", "", "", "", ""])
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+
+    main(["onboard", str(cv)])  # must not raise
+
+    captured = capsys.readouterr()
+    assert "could not be decoded; supply a text CV" in captured.err
+    assert "Continuing without the CV" in captured.out
+    assert "Onboarding complete." in captured.out
+    conn = _conn(instance)
+    try:
+        assert SqliteEvidenceRepository(conn).list_all() == []
+    finally:
+        conn.close()
+    assert not (instance / "files").exists()
+
+
 def test_onboarding_ux_messages(instance, tmp_path):
     """Invalid choices and invalid profile values re-prompt with a reason, and
     a missing end date renders as 'present', never 'None'."""
@@ -243,10 +372,6 @@ def test_onboarding_with_cv_requires_a_model(instance, tmp_path):
 # `open-career onboard cv.txt` with a failing `claude` call informs the user
 # and continues down the no-CV question path instead of dying. The subprocess
 # boundary is faked; the suite never calls the real CLI.
-
-import subprocess
-
-from apps.cli.main import main
 
 
 def _completed(returncode=0, stdout="", stderr=""):
