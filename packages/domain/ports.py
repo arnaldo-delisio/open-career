@@ -249,6 +249,22 @@ class StorageAdapter(ABC):
     def exists(self, relative_path: str) -> bool: ...
 
 
+class CvRenderer(ABC):
+    """Content model -> PDF bytes (single-column ATS-safe template, headless
+    Chromium). Asserts the fixed section order; drift is a build failure."""
+
+    @abstractmethod
+    def render_pdf(self, cv) -> bytes: ...
+
+
+class PdfTextExtractor(ABC):
+    """Runs pdftotext -layout on artifact bytes for the mandatory separate
+    ATS-parseability step (never folded into render, never skipped)."""
+
+    @abstractmethod
+    def extract_layout(self, pdf_bytes: bytes) -> str: ...
+
+
 class ModelUnavailableError(RuntimeError):
     """The model backend cannot run at all (e.g. claude CLI absent)."""
 
