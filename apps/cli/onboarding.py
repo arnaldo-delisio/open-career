@@ -27,6 +27,7 @@ from domain.entities import Capability, CareerFact, CareerGoal, Evidence, Experi
 from domain.extraction import CvExtraction, CvExtractionService
 from domain.ids import new_id
 from domain.ports import ModelAdapter, StorageAdapter
+from domain.profile import InvalidProfileValueError
 from prompts import load_prompt
 
 _STRENGTHS = ("none", "weak", "moderate", "strong")
@@ -38,13 +39,15 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def _ask_choice(ask: Callable[[str], str], prompt: str, choices: tuple[str, ...], default: str) -> str:
+def _ask_choice(ask: Callable[[str], str], say: Callable[[str], None], prompt: str,
+                choices: tuple[str, ...], default: str) -> str:
     while True:
         answer = ask(f"{prompt} ({'/'.join(choices)}) [{default}]: ").strip().lower()
         if not answer:
             return default
         if answer in choices:
             return answer
+        say(f"invalid choice, expected {'/'.join(choices)}")
 
 
 def run_onboarding(conn: sqlite3.Connection, storage: StorageAdapter,
@@ -105,8 +108,10 @@ def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
     experience_ids: list[str | None] = []
     order = 0
     for draft in extraction.experiences:
-        say(f"\n[{draft.kind}] {draft.title} @ {draft.org} ({draft.start_date} - {draft.end_date})")
-        action = _ask_choice(ask, "confirm/edit/reject", ("confirm", "edit", "reject", "c", "e", "r"), "confirm")
+        say(f"\n[{draft.kind}] {draft.title} @ {draft.org}"
+            f" ({draft.start_date or '?'} - {draft.end_date or 'present'})")
+        action = _ask_choice(ask, say, "confirm/edit/reject",
+                             ("confirm", "edit", "reject", "c", "e", "r"), "confirm")
         if action in ("reject", "r"):
             experience_ids.append(None)
             continue
@@ -161,7 +166,8 @@ def _confirm_drafts(facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCa
     for fact_id in draft_fact_ids:
         fact = facts_repo.get(fact_id)
         say(f"\n[{fact.fact_type}] {fact.statement}")
-        action = _ask_choice(ask, "confirm/edit/reject", ("confirm", "edit", "reject", "c", "e", "r"), "confirm")
+        action = _ask_choice(ask, say, "confirm/edit/reject",
+                             ("confirm", "edit", "reject", "c", "e", "r"), "confirm")
         if action in ("reject", "r"):
             facts_repo.set_status(fact_id, "retracted")
             continue
@@ -205,7 +211,7 @@ def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceReposi
         if capabilities_repo.get_by_name(name):
             say(f"'{name}' already exists; skipping.")
             continue
-        strength = _ask_choice(ask, "Strength", _STRENGTHS, "moderate")
+        strength = _ask_choice(ask, say, "Strength", _STRENGTHS, "moderate")
         capability = Capability(id=new_id("cap"), name=name, strength=strength,
                                 last_assessed_at=_now())
         capabilities_repo.add(capability)
@@ -234,12 +240,18 @@ def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceReposi
         statement = ask("Goal: ").strip()
         if not statement:
             break
-        horizon = _ask_choice(ask, "Horizon", _HORIZONS, "mid")
+        horizon = _ask_choice(ask, say, "Horizon", _HORIZONS, "mid")
         goals_repo.add(CareerGoal(id=new_id("goal"), statement=statement, horizon=horizon))
 
     say("\nProfile basics (blank to skip a field):")
     profile_repo = SqliteUserProfileRepository(conn)
     for field in _PROFILE_BASICS:
-        value = ask(f"{field}: ").strip()
-        if value:
-            profile_repo.set_field(field, value, source="user_edit")
+        while True:
+            value = ask(f"{field}: ").strip()
+            if not value:
+                break
+            try:
+                profile_repo.set_field(field, value, source="user_edit")
+                break
+            except InvalidProfileValueError as e:
+                say(f"invalid value: {e}")

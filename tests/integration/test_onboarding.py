@@ -189,6 +189,44 @@ def test_onboarding_without_cv_degrades_to_questions(instance):
         conn.close()
 
 
+def test_onboarding_ux_messages(instance, tmp_path):
+    """Invalid choices and invalid profile values re-prompt with a reason, and
+    a missing end date renders as 'present', never 'None'."""
+    extraction = json.dumps({
+        "experiences": [{"kind": "role", "title": "Eng", "org": "Acme",
+                         "start_date": "2021", "end_date": None, "summary": None}],
+        "facts": [],
+    })
+
+    class CurrentRoleModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            return extraction
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    answers = [
+        "banana", "confirm",            # invalid choice re-prompts with a message
+        "",                              # capabilities: none
+        "",                              # goals: none
+        "",                              # full_name skipped
+        "not-an-email", "jane@example.com",  # email: rejected with reason, then valid
+        "",                              # location skipped
+    ]
+    says = []
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), CurrentRoleModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        joined = "\n".join(says)
+        assert "(2021 - present)" in joined
+        assert "None" not in joined
+        assert "invalid choice, expected confirm/edit/reject" in joined
+        assert "invalid value: 'not-an-email' does not look like an email address" in joined
+        assert SqliteUserProfileRepository(conn).get_fields() == {"email": "jane@example.com"}
+    finally:
+        conn.close()
+
+
 def test_onboarding_with_cv_requires_a_model(instance, tmp_path):
     cv = tmp_path / "cv.txt"
     cv.write_text("text")

@@ -19,7 +19,13 @@ from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
 from apps.cli.onboarding import run_onboarding
 from domain.ports import ModelUnavailableError
-from domain.profile import UnknownProfileFieldError
+from adapters.storage.sqlite_entities import (
+    SqliteCapabilityRepository,
+    SqliteCareerFactRepository,
+    SqliteCareerGoalRepository,
+    SqliteExperienceRepository,
+)
+from domain.profile import InvalidProfileValueError, UnknownProfileFieldError
 
 
 def _connect() -> sqlite3.Connection:
@@ -95,12 +101,79 @@ def cmd_profile_set(args: argparse.Namespace) -> None:
     conn = _connect()
     try:
         SqliteUserProfileRepository(conn).set_field(args.field, args.value, source="user_edit")
-    except UnknownProfileFieldError as e:
+    except (UnknownProfileFieldError, InvalidProfileValueError) as e:
         print(f"profile set failed: {e}", file=sys.stderr)
         raise SystemExit(1)
     finally:
         conn.close()
     print(f"profile.{args.field} set")
+
+
+def _print_profile(conn) -> None:
+    fields = SqliteUserProfileRepository(conn).get_fields()
+    print("Profile:")
+    if not fields:
+        print("  (empty)")
+    for field in sorted(fields):
+        print(f"  {field}: {fields[field]}")
+
+
+def cmd_profile_show(_args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        _print_profile(conn)
+    finally:
+        conn.close()
+
+
+def cmd_show(_args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        _print_profile(conn)
+
+        facts = SqliteCareerFactRepository(conn).list_all()
+        approved = [f for f in facts if f.user_approved and f.status == "active"]
+        by_experience: dict[str | None, list] = {}
+        for fact in approved:
+            by_experience.setdefault(fact.experience_id, []).append(fact)
+
+        print("\nExperiences:")
+        experiences = SqliteExperienceRepository(conn).list_all()
+        if not experiences:
+            print("  (none)")
+        for exp in experiences:
+            print(f"  [{exp.kind}] {exp.title} @ {exp.org}"
+                  f" ({exp.start_date or '?'} - {exp.end_date or 'present'})")
+            for fact in by_experience.get(exp.id, []):
+                print(f"    - {fact.statement}")
+        unattached = by_experience.get(None, [])
+        if unattached:
+            print("  (no experience)")
+            for fact in unattached:
+                print(f"    - {fact.statement}")
+
+        print("\nCapabilities:")
+        capabilities = SqliteCapabilityRepository(conn).list_all()
+        if not capabilities:
+            print("  (none)")
+        for cap in capabilities:
+            print(f"  {cap.name} ({cap.strength})")
+
+        print("\nGoals:")
+        goals = [g for g in SqliteCareerGoalRepository(conn).list_all() if g.status == "active"]
+        if not goals:
+            print("  (none)")
+        for goal in goals:
+            print(f"  [{goal.horizon}] {goal.statement}")
+
+        edges_repo = SqliteCareerEdgeRepository(conn)
+        edges = edges_repo.list_all()
+        active = [e for e in edges if e.superseded_at is None]
+        untyped = edges_repo.list_untyped()
+        print(f"\nEdges: {len(edges)} total, {len(active)} active,"
+              f" {len(untyped)} untyped (see: open-career edges list --untyped)")
+    finally:
+        conn.close()
 
 
 def cmd_edges_list(args: argparse.Namespace) -> None:
@@ -131,12 +204,15 @@ def main(argv: list[str] | None = None) -> None:
     p_onboard.add_argument("cv", nargs="?", default=None, help="optional CV text file")
     p_onboard.set_defaults(func=cmd_onboard)
 
+    sub.add_parser("show", help="print the stored career state, human-readable").set_defaults(func=cmd_show)
+
     p_profile = sub.add_parser("profile", help="canonical profile fields (closed set, audited writes)")
     profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)
     p_profile_set = profile_sub.add_parser("set", help="set one canonical field")
     p_profile_set.add_argument("field")
     p_profile_set.add_argument("value")
     p_profile_set.set_defaults(func=cmd_profile_set)
+    profile_sub.add_parser("show", help="print the profile fields").set_defaults(func=cmd_profile_show)
 
     p_edges = sub.add_parser("edges", help="career graph edges")
     edges_sub = p_edges.add_subparsers(dest="edges_command", required=True)
@@ -154,7 +230,20 @@ def main(argv: list[str] | None = None) -> None:
     p_import.set_defaults(func=cmd_import)
 
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except sqlite3.Error as e:
+        # One line, never a traceback. Only schema-shaped failures get the
+        # invalid-instance wording; a locked db or I/O error is not one.
+        detail = str(e)
+        schema_shaped = isinstance(e, sqlite3.OperationalError) and any(
+            marker in detail
+            for marker in ("no such table", "already exists", "file is not a database"))
+        if schema_shaped:
+            print(f"this does not look like a valid open-career instance ({detail})", file=sys.stderr)
+        else:
+            print(f"database operation failed: {detail}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

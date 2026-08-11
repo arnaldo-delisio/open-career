@@ -55,7 +55,9 @@ rejected interactively), then asks the gap questions (capabilities, goals, profi
 basics). Without a CV it runs the same questions from a blank slate. Nothing the model
 drafts is usable for generation until approved.
 
-Other commands: `open-career migrate`, `open-career profile set <field> <value>` (closed
+Other commands: `open-career migrate`, `open-career show` (human-readable dump of the
+stored career state; `open-career profile show` for the profile alone),
+`open-career profile set <field> <value>` (closed
 canonical field set, every write audited), `open-career edges list [--untyped]` (untyped =
 edges migrated from the 0001 schema, excluded from traversal until re-typed),
 `open-career export <file.json>`, `open-career import <file.json>` (import fully replaces
