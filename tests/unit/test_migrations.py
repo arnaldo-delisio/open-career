@@ -8,32 +8,32 @@ from adapters.storage.migrations import MIGRATIONS_DIR, _resolve_migrations_dir,
 EXPECTED_TABLES = {
     "career_edges", "experiences", "career_facts", "evidence", "capabilities",
     "role_families", "career_goals", "strategy_versions",
-    "strategy_role_family_allocations", "user_profile", "profile_field_writes",
+    "strategy_role_family_allocations", "user_profile", "profile_field_writes", "packages", "package_versions",
 }
 
 
-def test_fresh_init_applies_0001_and_0002(tmp_path):
+def test_fresh_init_applies_all_migrations(tmp_path):
     db = tmp_path / "test.sqlite3"
     applied = migrate(db)
-    assert applied == ["0001", "0002"]
+    assert applied == ["0001", "0002", "0003"]
     conn = sqlite3.connect(db)
     try:
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_migrations")]
-        assert versions == ["0001", "0002"]
+        assert versions == ["0001", "0002", "0003"]
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert EXPECTED_TABLES <= tables
         assert "career_edges_0001" not in tables
         assert "_0002_conversion_check" not in tables
         indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         assert {"idx_career_edges_active_unique", "idx_career_edges_active_by_target",
-                "idx_career_edges_active_by_source"} <= indexes
+                "idx_career_edges_active_by_source", "idx_packages_one_base_per_family"} <= indexes
     finally:
         conn.close()
 
 
 def test_migrate_is_idempotent(tmp_path):
     db = tmp_path / "test.sqlite3"
-    assert migrate(db) == ["0001", "0002"]
+    assert migrate(db) == ["0001", "0002", "0003"]
     assert migrate(db) == []
 
 
@@ -61,7 +61,7 @@ def test_0002_converts_legacy_edges_preserving_data(tmp_path):
             " VALUES ('cap_b', 'req_c', 'satisfies', 'inference', 'matcher-run-1')")
     conn.close()
 
-    assert migrate(db, backups_dir=tmp_path / "backups") == ["0002"]
+    assert migrate(db, backups_dir=tmp_path / "backups") == ["0002", "0003"]
 
     conn = sqlite3.connect(db)
     try:
@@ -130,10 +130,10 @@ def test_backup_taken_before_upgrading_existing_db(tmp_path):
     extra_dir.mkdir()
     for f in MIGRATIONS_DIR.glob("[0-9]*.sql"):
         (extra_dir / f.name).write_text(f.read_text())
-    (extra_dir / "0003_noop.sql").write_text("CREATE TABLE noop_probe (id INTEGER PRIMARY KEY);")
+    (extra_dir / "0004_noop.sql").write_text("CREATE TABLE noop_probe (id INTEGER PRIMARY KEY);")
 
     applied = migrate(db, migrations_dir=extra_dir, backups_dir=backups)
-    assert applied == ["0003"]
+    assert applied == ["0004"]
 
     backup_files = list(backups.iterdir())
     assert len(backup_files) == 1
@@ -234,7 +234,7 @@ def test_legacy_db_backup_is_a_pre_write_snapshot(tmp_path):
     conn.close()
 
     backups = tmp_path / "backups"
-    assert migrate(db, backups_dir=backups) == ["0001", "0002"]
+    assert migrate(db, backups_dir=backups) == ["0001", "0002", "0003"]
 
     backup_files = list(backups.iterdir())
     assert len(backup_files) == 1

@@ -9,6 +9,7 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "pydantic",
+    "playwright>=1.62.0",
 ]
 
 [project.scripts]

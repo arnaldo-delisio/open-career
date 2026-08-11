@@ -83,3 +83,19 @@ def test_generation_eligibility_gate():
     assert not is_generation_eligible(_edge(created_by="matcher", user_verified=0, claim_kind="fact"))
     # A user-authored inference is not a fact until verified.
     assert not is_generation_eligible(_edge(created_by="user", user_verified=0, claim_kind="inference"))
+
+
+def test_targets_vocabulary_endpoints(conn):
+    """TARGETS extends the vocabulary (OC-33): role_family -> capability only."""
+    with conn:
+        conn.execute("INSERT INTO role_families (id, name, rationale) VALUES ('rf_1', 'FDE', 'r')")
+    repo = SqliteCareerEdgeRepository(conn)
+    stored = repo.add(_edge(id="edge_targets", source_type="role_family", source_id="rf_1",
+                            edge_type="TARGETS", target_type="capability", target_id="cap_1"))
+    assert stored.edge_type == "TARGETS"
+    with pytest.raises(EdgeValidationError, match="TARGETS requires role_family -> capability"):
+        repo.add(_edge(id="edge_bad", source_type="evidence", source_id="ev_1",
+                       edge_type="TARGETS", target_type="capability", target_id="cap_1"))
+    with pytest.raises(EdgeValidationError):
+        repo.add(_edge(id="edge_bad2", source_type="role_family", source_id="rf_1",
+                       edge_type="TARGETS", target_type="evidence", target_id="ev_1"))

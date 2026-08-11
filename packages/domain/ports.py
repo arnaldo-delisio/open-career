@@ -147,6 +147,79 @@ class UserProfileRepository(ABC):
     def list_writes(self) -> list[ProfileFieldWrite]: ...
 
 
+class PackageRepository(ABC):
+    """The package lifecycle seam (spec: decisions/package-generation-design.md).
+    Enforces, transactionally: the state-transition table, status-dependent
+    required fields, write-once finalized bundle fields, and the generation
+    lease (owner token, generation fence, expiry at the database clock)."""
+
+    @abstractmethod
+    def get_or_create_base_package(self, role_family_id: str): ...
+
+    @abstractmethod
+    def get_package(self, package_id: str): ...
+
+    @abstractmethod
+    def get_base_package_for_family(self, role_family_id: str): ...
+
+    @abstractmethod
+    def get_version(self, version_id: str): ...
+
+    @abstractmethod
+    def list_versions(self, package_id: str) -> list: ...
+
+    @abstractmethod
+    def reserve_version(self, package_id: str, owner_token: str, lease_seconds: int):
+        """Reserve the next version number in a short write transaction as a
+        GENERATING row holding a fresh lease. A concurrent generate loses on
+        the UNIQUE constraint and retries cleanly."""
+
+    @abstractmethod
+    def renew_lease(self, version_id: str, owner_token: str, lease_generation: int,
+                    lease_seconds: int) -> bool:
+        """One atomic conditional update: GENERATING status, matching owner and
+        generation, unexpired lease at the db clock. Zero rows renewed means
+        the worker is permanently stopped."""
+
+    @abstractmethod
+    def check_lease(self, version_id: str, owner_token: str, lease_generation: int) -> bool:
+        """True only while this owner holds an unexpired lease on a GENERATING
+        row (checked immediately before each object write)."""
+
+    @abstractmethod
+    def record_progress(self, version_id: str, owner_token: str, lease_generation: int,
+                        **fields) -> None:
+        """Persist stage progress on the owned GENERATING row (lease-fenced)."""
+
+    @abstractmethod
+    def finalize_verified(self, version_id: str, owner_token: str, lease_generation: int,
+                          **bundle) -> None:
+        """GENERATING -> VERIFIED, validating lease ownership, token, and
+        generation atomically, plus the full required audit bundle."""
+
+    @abstractmethod
+    def fail(self, version_id: str, owner_token: str, lease_generation: int,
+             failure_report_json: str) -> None:
+        """GENERATING -> FAILED by the lease owner; always requires a
+        structured failure report; retains recorded partial artifacts."""
+
+    @abstractmethod
+    def claim_expired_and_fail(self, version_id: str, failure_report_json: str) -> bool:
+        """Recovery: claim a GENERATING row whose lease has expired, via
+        compare-and-set on status and lease generation, and mark it FAILED
+        with a structured interruption report. A live generation can never be
+        failed from under its owner."""
+
+    @abstractmethod
+    def approve(self, version_id: str, approved_at: str) -> None:
+        """VERIFIED -> APPROVED; sets packages.approved_version_id in the same
+        repository operation, validating same-package ownership."""
+
+
+class StorageObjectExistsError(RuntimeError):
+    """A write-once object already exists at the locator; nothing overwrites."""
+
+
 class StorageAdapter(ABC):
     """Filesystem access boundary. Implementations root all paths at the
     instance directory; domain and app code never touch the filesystem directly."""
@@ -155,10 +228,22 @@ class StorageAdapter(ABC):
     def read_text(self, relative_path: str) -> str: ...
 
     @abstractmethod
+    def read_bytes(self, relative_path: str) -> bytes: ...
+
+    @abstractmethod
     def write_text(self, relative_path: str, content: str) -> None: ...
 
     @abstractmethod
     def write_bytes(self, relative_path: str, content: bytes) -> None: ...
+
+    @abstractmethod
+    def write_text_new(self, relative_path: str, content: str) -> None:
+        """Write-once: raises StorageObjectExistsError if the object exists
+        (package snapshots and artifacts are stored non-overwritably)."""
+
+    @abstractmethod
+    def write_bytes_new(self, relative_path: str, content: bytes) -> None:
+        """Write-once variant of write_bytes; see write_text_new."""
 
     @abstractmethod
     def exists(self, relative_path: str) -> bool: ...

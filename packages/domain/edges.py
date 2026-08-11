@@ -25,6 +25,10 @@ EDGE_VOCABULARY: dict[str, tuple[str, str]] = {
     "DEMONSTRATES": ("experience", "capability"),
     "REQUIRES": ("career_goal", "capability"),
     "PRIORITIZES": ("strategy_version", "capability"),
+    # Package-generation phase (OC-33): which capabilities matter inside one
+    # family. Does not rival the allocations table, which ranks families
+    # against each other; TARGETS states relevance, not possession.
+    "TARGETS": ("role_family", "capability"),
 }
 
 

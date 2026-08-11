@@ -12,6 +12,7 @@ ALL_TABLES = {
     "career_edges", "experiences", "career_facts", "evidence", "capabilities",
     "role_families", "career_goals", "strategy_versions",
     "strategy_role_family_allocations", "user_profile", "profile_field_writes",
+    "packages", "package_versions",
 }
 
 
