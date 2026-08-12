@@ -20,7 +20,6 @@ from typing import Callable
 
 from adapters.storage.instance import instance_dir
 
-from adapters.storage.family_strategy import FamilyStrategyService
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_entities import (
     SqliteCapabilityRepository,
@@ -28,6 +27,7 @@ from adapters.storage.sqlite_entities import (
     SqliteEvidenceRepository,
     SqliteExperienceRepository,
     SqliteRoleFamilyRepository,
+    SqliteStrategyRepository,
 )
 from adapters.storage.sqlite_packages import SqlitePackageRepository
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
@@ -65,13 +65,17 @@ def build_context(conn: sqlite3.Connection, family_ref: str) -> GenerationContex
         raise PackageCliError(f"unknown role family '{family_ref}'")
     if family.status != "active":
         raise PackageCliError(f"family '{family.name}' is {family.status}, not active")
-    service = FamilyStrategyService(conn)
-    objective, allocations = service.current_allocations()
-    if objective is None or family.id not in allocations:
+    # One read of the current approved StrategyVersion row: version number,
+    # objective, and allocations all derive from that single row, so the
+    # context can never mix two approved versions (versions are append-only
+    # and a version's allocations land in the same transaction as its row).
+    current = SqliteStrategyRepository(conn).current()
+    allocations = ({a.role_family_id: a.allocation for a in current.allocations}
+                   if current else {})
+    if current is None or family.id not in allocations:
         raise PackageCliError(
             f"family '{family.name}' has no allocation in the current approved"
             " strategy version; run `open-career families init` (or edit)")
-    strategy_version = SqliteStrategyVersionNumber(conn).current_version()
     edges = SqliteCareerEdgeRepository(conn)
     traversal = EvidenceTraversal(
         edges, SqliteEvidenceRepository(conn), SqliteCareerFactRepository(conn),
@@ -88,19 +92,9 @@ def build_context(conn: sqlite3.Connection, family_ref: str) -> GenerationContex
         experiences=tuple(
             e for e in SqliteExperienceRepository(conn).list_all()
             if e.id in reachable or e.kind in ("project", "education")),
-        strategy=StrategySnapshot(family=family, strategy_version=strategy_version,
-                                  objective=objective,
+        strategy=StrategySnapshot(family=family, strategy_version=current.version,
+                                  objective=current.objective,
                                   allocation=allocations[family.id]))
-
-
-class SqliteStrategyVersionNumber:
-    def __init__(self, conn: sqlite3.Connection):
-        self._conn = conn
-
-    def current_version(self) -> int:
-        row = self._conn.execute(
-            "SELECT MAX(version) FROM strategy_versions WHERE user_approved = 1").fetchone()
-        return row[0] or 0
 
 
 def make_pipeline(conn: sqlite3.Connection, storage: StorageAdapter,

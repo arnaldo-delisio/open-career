@@ -105,13 +105,15 @@ def test_model_cannot_stamp_meta_identity_fields():
     context = make_context()
     good = make_cv()
     tampered = replace(good, meta=replace(good.meta, role_family_id="rf_evil",
-                                          strategy_version=99))
+                                          strategy_version=99,
+                                          generated_at="1999-01-01T00:00:00Z"))
     model = FakeModel([tampered.to_json()])
     result = CvDraftingService(model, "PROMPT {context_json}").draft(
         context, "2026-08-11T00:00:00Z")
     assert result.report.passed and result.attempts == 1
     assert result.cv.meta.role_family_id == "rf_1"
     assert result.cv.meta.strategy_version == 1
+    assert result.cv.meta.generated_at == "2026-08-11T00:00:00Z"  # the caller's clock
 
 
 def test_model_draft_omitting_factless_education_is_corrected():

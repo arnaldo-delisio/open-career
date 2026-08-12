@@ -11,6 +11,7 @@ without writing when the lease is gone. A stale write can land at worst as
 an inert, attributable orphan at a stale-generation locator; nothing
 finalizes from it."""
 
+import dataclasses
 import hashlib
 import json
 import threading
@@ -188,6 +189,11 @@ class GenerationPipeline:
         # Stage 2: draft and verify (model work runs outside any write txn).
         generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         if edited_model is not None:
+            # The regenerated version's timestamp comes from the pipeline
+            # clock, never carried stale from the reviewed version.
+            edited_model = dataclasses.replace(
+                edited_model,
+                meta=dataclasses.replace(edited_model.meta, generated_at=generated_at))
             report = GroundingVerifier(context).verify(edited_model)
             draft = DraftResult(cv=edited_model, report=report, attempts=0,
                                 fallback_used=False, dropped=())

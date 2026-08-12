@@ -129,7 +129,8 @@ class CvDraftingService:
                 cv = replace(cv, header=build_header(context),
                              meta=replace(cv.meta,
                                           role_family_id=context.role_family_id,
-                                          strategy_version=context.strategy.strategy_version))
+                                          strategy_version=context.strategy.strategy_version,
+                                          generated_at=generated_at))
             except CvModelError as e:
                 failure = ("\n\nYour previous output failed schema validation: "
                            f"{e}\nReturn only corrected JSON matching the schema exactly.")

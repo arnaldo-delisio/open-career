@@ -430,6 +430,9 @@ def test_review_edit_stamps_the_current_strategy_version(env):
     assert len(versions) == 2 and versions[-1].status == VERIFIED
     meta = json.loads(versions[-1].content_model_json)["meta"]
     assert meta["strategy_version"] == 2
+    # The regenerated version's timestamp is the pipeline clock, not the
+    # reviewed version's stale generated_at.
+    assert meta["generated_at"] != "2026-08-12T00:00:00Z"
 
 
 def test_null_end_date_renders_blank_never_present(env):
@@ -504,3 +507,21 @@ def test_project_only_family_generates_and_verifies(env):
     assert content["experiences"] == []
     assert [e["experience_id"] for e in content["projects"]] == ["exp_1"]
     assert content["projects"][0]["bullets"]
+
+
+def test_context_strategy_never_mixes_versions(env, monkeypatch):
+    """A strategy edit landing mid-build cannot mix versions: version number,
+    objective, and allocation all derive from one approved StrategyVersion
+    row read once, whichever version that is."""
+    conn, storage = env
+    original = package_cmd.resolve_family
+
+    def resolve_then_concurrent_edit(conn_, ref):
+        family = original(conn_, ref)
+        FamilyStrategyService(conn_).set_emphasis("rf_1", 2)  # mints version 2
+        return family
+
+    monkeypatch.setattr(package_cmd, "resolve_family", resolve_then_concurrent_edit)
+    context = package_cmd.build_context(conn, "FDE")
+    assert context.strategy.strategy_version == 2
+    assert context.strategy.allocation == 2  # same version's allocation, never a mix
