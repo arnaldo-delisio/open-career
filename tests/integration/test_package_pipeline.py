@@ -487,3 +487,20 @@ def test_header_only_model_response_never_ships(env):
     content = json.loads(version.content_model_json)
     assert [e["experience_id"] for e in content["experiences"]] == ["exp_1"]
     assert content["experiences"][0]["bullets"]
+
+
+def test_project_only_family_generates_and_verifies(env):
+    """Second-order regression on the husk gate: when the family's only
+    reachable facts attach to a project-kind experience, the projects section
+    carries the bullets and generation verifies."""
+    conn, storage = env
+    with conn:
+        conn.execute("UPDATE experiences SET kind = 'project' WHERE id = 'exp_1'")
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    assert result.status == VERIFIED
+    content = json.loads(
+        SqlitePackageRepository(conn).get_version(result.version_id).content_model_json)
+    assert content["experiences"] == []
+    assert [e["experience_id"] for e in content["projects"]] == ["exp_1"]
+    assert content["projects"][0]["bullets"]

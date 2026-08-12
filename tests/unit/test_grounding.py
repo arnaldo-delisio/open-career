@@ -372,6 +372,32 @@ def test_duplicated_entries_fail_coverage():
     assert "coverage" in rules(across)
 
 
+PROJ = Experience(id="exp_proj", kind="project", title="Open Data Pipeline",
+                  org=None, start_date="2023-01", end_date="2023-06")
+PROJ_FACT = CareerFact(id="fact_p", fact_type="achievement",
+                       statement="Built the open data pipeline in Python",
+                       source="interview", user_approved=1, experience_id="exp_proj")
+
+
+def test_project_only_facts_satisfy_the_husk_gate():
+    """A family supported solely by facts attached to a project-kind
+    experience verifies with the bullets in the projects section; the
+    header-only husk still fails."""
+    context = make_context(facts=(PROJ_FACT,), experiences=(PROJ,))
+    base = make_cv()
+    entry = CvExperienceEntry(
+        experience_id=PROJ.id, title=PROJ.title, org=PROJ.org,
+        start_date=PROJ.start_date, end_date=PROJ.end_date,
+        bullets=(Bullet(text=PROJ_FACT.statement, fact_ids=("fact_p",)),))
+    cv = CvModel(header=base.header, summary="", skills=base.skills,
+                 experiences=(), projects=(entry,), meta=base.meta)
+    report = verify(cv, context)
+    assert report.passed, report.to_json()
+    husk = CvModel(header=base.header, summary="", skills=base.skills,
+                   experiences=(), meta=base.meta)
+    assert "coverage" in rules(verify(husk, context))
+
+
 def test_out_of_order_experiences_fail():
     context = make_context()
     older = _entry(EXP2, bullets=(Bullet(
