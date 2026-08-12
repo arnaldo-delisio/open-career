@@ -10,8 +10,8 @@ scope ledger at `../DECISIONS.md`; this repo carries only code.
 ```
 apps/
   api/          FastAPI app (health endpoint, repository wiring)
-  cli/          open-career CLI: init, migrate, onboard, deepen, stories, families,
-                package, profile, policy, edges, export, import
+  cli/          open-career CLI: init, migrate, onboard, deepen, stories, session,
+                families, package, profile, policy, edges, export, import
   extension/    placeholder (all backend calls route through one service-worker module)
 packages/
   domain/       entities, ports, and domain services (traversal, selection, CV content
@@ -72,6 +72,17 @@ default, resume state computed from the data itself. Standing stances live in th
 policy seam: `open-career policy set <key> <json-or-scalar>` and `open-career policy
 show` (closed key set: EEO stance, compensation floor/target with scalar preference,
 preference and logistics policies; deterministic comparison rules in code, OC-22).
+
+Each sitting can also be driven through one-shot commands (OC-36), so an agent limited to
+short-lived commands can conduct it: `open-career session start <onboard|deepen|stories>
+[cv]` detaches a serve process holding the sitting open, `session show` prints the
+transcript since the last show plus the pending question, `session answer "<text>"`
+answers it (`""` sends blank, which means skip), `session stop` terminates it. One
+session at a time; persistence is per item, so a stopped or crashed session loses
+nothing already persisted. Multi-prompt units (the family setup step inside onboard,
+an in-progress story inside stories) persist when the unit completes; a unit cut short
+is simply asked again on the next run, since resume state is computed from the data. Re-running `onboard` with the same CV file resumes from the data
+itself (pending drafts are re-walked, extraction never re-runs; never a stored cursor).
 
 Package generation (spec: the scope's `decisions/package-generation-design.md`, OC-33/
 OC-34): `open-career families init` proposes target role families from approved state

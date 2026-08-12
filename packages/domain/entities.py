@@ -56,6 +56,9 @@ class CareerFact:
     source_location: str | None = None
     created_at: str | None = None
     verified_at: str | None = None
+    # Which evidence row's extraction minted this draft (cv-sourced facts;
+    # OC-36 resume scoping). NULL on rows predating migration 0005.
+    origin_evidence_id: str | None = None
 
 
 @dataclass(frozen=True)

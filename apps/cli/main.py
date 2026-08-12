@@ -39,6 +39,7 @@ from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from apps.cli import families as families_cli
 from apps.cli import interview as interview_cli
 from apps.cli import package_cmd
+from apps.cli import session as session_cli
 from apps.cli import stories as stories_cli
 from domain.policies import InvalidPolicyValueError, UnknownPolicyKeyError
 from domain.cv_model import CvModelError
@@ -96,6 +97,47 @@ def cmd_import(args: argparse.Namespace) -> None:
     print(f"imported from {src}")
 
 
+def run_onboard_flow(conn, storage, cv_path: Path | None, ask, say, warn=None) -> None:
+    """The whole onboard sitting behind one ask/say seam (OC-36): CV walk with
+    degradation, the families step, then tier 1. warn carries the error lines
+    the interactive command routes to stderr; a transport routes them through
+    its transcript instead."""
+    warn = warn or (lambda line: print(line, file=sys.stderr))
+    model = ClaudeCodeAdapter() if cv_path is not None else None
+    try:
+        run_onboarding(conn, storage, model, cv_path, ask=ask, say=say)
+    except (ModelCallError, ModelUnavailableError, CvReadError) as e:
+        # A failed or unavailable model is not a dead backend: inform, then
+        # degrade to the same interview questions the no-CV path runs.
+        # (ModelUnavailableError's own message names the missing claude CLI
+        # and how to get it.)
+        warn(f"CV extraction failed: {e}")
+        say("Continuing without the CV; you can re-run onboarding later.")
+        run_onboarding(conn, storage, None, None, ask=ask, say=say)
+    # Onboarding flows into the target-role-families step when no active
+    # family exists yet (design: families init entered automatically).
+    families = SqliteRoleFamilyRepository(conn).list_all()
+    has_state = any(
+        f.user_approved and f.status == "active"
+        for f in SqliteCareerFactRepository(conn).list_all())
+    if has_state and not any(f.status == "active" for f in families):
+        try:
+            families_cli.run_families_init(conn, ClaudeCodeAdapter(), ask, say)
+        except KeyboardInterrupt:
+            # The families flow (OC-33) buffers its answers until the
+            # strategy version mints, so the generic progress-saved
+            # message would lie here; say exactly what held.
+            say("\ninterrupted during family setup; family answers were"
+                " not yet saved, everything before this step is")
+            raise SystemExit(130)
+        except _CLI_ERRORS as e:
+            warn(f"families init skipped: {e}")
+            say("Run `open-career families init` when ready.")
+    # Sitting one's must-ask block (OC-35): sequenced after the CV walk and
+    # the families step, attached around that seam, never inside it.
+    interview_cli.run_tier1(conn, ask, say)
+
+
 def cmd_onboard(args: argparse.Namespace) -> None:
     cv_path = Path(args.cv) if args.cv else None
     if cv_path is not None and not cv_path.exists():
@@ -104,43 +146,10 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     conn = _connect()
     storage = LocalStorageAdapter(instance_dir())
     try:
-        model = ClaudeCodeAdapter() if cv_path is not None else None
-        try:
-            run_onboarding(conn, storage, model, cv_path)
-        except (ModelCallError, ModelUnavailableError, CvReadError) as e:
-            # A failed or unavailable model is not a dead backend: inform, then
-            # degrade to the same interview questions the no-CV path runs.
-            # (ModelUnavailableError's own message names the missing claude CLI
-            # and how to get it.)
-            print(f"CV extraction failed: {e}", file=sys.stderr)
-            print("Continuing without the CV; you can re-run onboarding later.")
-            run_onboarding(conn, storage, None, None)
+        run_onboard_flow(conn, storage, cv_path, input, print)
     except ValueError as e:
         print(f"onboarding failed: {e}", file=sys.stderr)
         raise SystemExit(1)
-    else:
-        # Onboarding flows into the target-role-families step when no active
-        # family exists yet (design: families init entered automatically).
-        families = SqliteRoleFamilyRepository(conn).list_all()
-        has_state = any(
-            f.user_approved and f.status == "active"
-            for f in SqliteCareerFactRepository(conn).list_all())
-        if has_state and not any(f.status == "active" for f in families):
-            try:
-                families_cli.run_families_init(conn, ClaudeCodeAdapter(), input, print)
-            except KeyboardInterrupt:
-                # The families flow (OC-33) buffers its answers until the
-                # strategy version mints, so the generic progress-saved
-                # message would lie here; say exactly what held.
-                print("\ninterrupted during family setup; family answers were"
-                      " not yet saved, everything before this step is")
-                raise SystemExit(130)
-            except _CLI_ERRORS as e:
-                print(f"families init skipped: {e}", file=sys.stderr)
-                print("Run `open-career families init` when ready.")
-        # Sitting one's must-ask block (OC-35): sequenced after the CV walk and
-        # the families step, attached around that seam, never inside it.
-        interview_cli.run_tier1(conn, input, print)
     finally:
         conn.close()
 
@@ -150,7 +159,8 @@ def cmd_onboard(args: argparse.Namespace) -> None:
 _INTERVIEW_COMMANDS = ("onboard", "deepen", "stories")
 
 _CLI_ERRORS = (StrategyError, FamilyProposalError, CvModelError, PackageStateError,
-               package_cmd.PackageCliError, ModelCallError, ModelUnavailableError)
+               package_cmd.PackageCliError,
+               ModelCallError, ModelUnavailableError)
 
 
 def _run_cli(label: str, fn) -> None:
@@ -220,6 +230,19 @@ def cmd_stories(_args: argparse.Namespace) -> None:
         stories_cli.run_stories(conn, LocalStorageAdapter(instance_dir()), input, print)
     finally:
         conn.close()
+
+
+def cmd_session(args: argparse.Namespace) -> None:
+    if args.session_command == "start":
+        session_cli.run_start(args.flow, args.cv, print)
+    elif args.session_command == "serve":
+        session_cli.run_serve(args.flow, args.token, args.cv)
+    elif args.session_command == "show":
+        session_cli.run_show(args.full, print)
+    elif args.session_command == "answer":
+        session_cli.run_answer(args.text, print)
+    elif args.session_command == "stop":
+        session_cli.run_stop(print)
 
 
 def cmd_policy_set(args: argparse.Namespace) -> None:
@@ -413,6 +436,36 @@ def main(argv: list[str] | None = None) -> None:
     ).set_defaults(func=cmd_stories)
 
     sub.add_parser("show", help="print the stored career state, human-readable").set_defaults(func=cmd_show)
+
+    p_session = sub.add_parser(
+        "session", help="one-shot driving of the interview sittings (OC-36):"
+                        " start a detached sitting, show/answer/stop it")
+    session_sub = p_session.add_subparsers(dest="session_command", required=True)
+    p_session_start = session_sub.add_parser(
+        "start", help="detach a sitting (onboard/deepen/stories); one at a time")
+    p_session_start.add_argument("flow", choices=session_cli.FLOWS)
+    p_session_start.add_argument("cv", nargs="?", default=None,
+                                 help="optional CV text file (onboard only)")
+    p_session_start.set_defaults(func=cmd_session)
+    # The serve subcommand is the detached worker `session start` spawns; it is
+    # not meant to be typed by hand.
+    p_session_serve = session_sub.add_parser("serve")
+    p_session_serve.add_argument("flow", choices=session_cli.FLOWS)
+    p_session_serve.add_argument("token", help="launch token from session start")
+    p_session_serve.add_argument("cv", nargs="?", default=None)
+    p_session_serve.set_defaults(func=cmd_session)
+    p_session_show = session_sub.add_parser(
+        "show", help="transcript since the last show, then the pending question or status")
+    p_session_show.add_argument("--full", action="store_true",
+                                help="the whole transcript, not only what is new")
+    p_session_show.set_defaults(func=cmd_session)
+    p_session_answer = session_sub.add_parser(
+        "answer", help="answer the pending question (empty string means skip)")
+    p_session_answer.add_argument("text", help="the answer; \"\" sends blank (skip)")
+    p_session_answer.set_defaults(func=cmd_session)
+    session_sub.add_parser(
+        "stop", help="terminate the sitting; everything answered so far is saved"
+    ).set_defaults(func=cmd_session)
 
     p_profile = sub.add_parser("profile", help="canonical profile fields (closed set, audited writes)")
     profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)

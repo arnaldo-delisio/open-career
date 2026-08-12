@@ -69,10 +69,81 @@ def run_onboarding(conn: sqlite3.Connection, storage: StorageAdapter,
     if cv_path is not None:
         if model is None:
             raise ValueError("onboarding with a CV needs a ModelAdapter for extraction")
-        cv_evidence, extraction = _ingest_cv(conn, storage, model, cv_path, say)
-        experience_ids = _review_experiences(conn, extraction, ask, say)
-        draft_fact_ids = _persist_fact_drafts(conn, extraction, experience_ids, say)
-        _confirm_drafts(facts_repo, edges_repo, cv_evidence, draft_fact_ids, ask, say)
+        # Resume is derived from the data, never a stored cursor (OC-22): the
+        # CV bytes' hash finding an existing cv evidence row means this exact
+        # file was already ingested, so extraction (the only model call) and
+        # the experience walk never re-run; only still-pending drafts are
+        # walked again.
+        cv_bytes = cv_path.read_bytes()
+        content_hash = hashlib.sha256(cv_bytes).hexdigest()
+        cv_rows = [e for e in SqliteEvidenceRepository(conn).list_all()
+                   if e.evidence_type == "cv"]
+        matches = [e for e in cv_rows if e.content_hash == content_hash]
+        # Deterministic pick when the same bytes were somehow ingested twice:
+        # the most recent row wins (created_at, id as the tiebreak).
+        existing = max(matches, key=lambda e: (e.created_at or "", e.id),
+                       default=None)
+        if existing is not None:
+            cv_facts = [f for f in facts_repo.list_all() if f.source == "cv"]
+            null_pending = [f for f in cv_facts
+                            if f.origin_evidence_id is None
+                            and not f.user_approved and f.status == "active"]
+            # Drafts predating migration 0005 carry no origin: with exactly
+            # one cv evidence row they can only be its; with several, guessing
+            # could hand one CV's drafts to another's walk, so refuse.
+            if null_pending and len(cv_rows) > 1:
+                raise ValueError(
+                    "cannot resume: pending draft facts carry no CV provenance"
+                    " and several CV evidence rows exist; approve or retract"
+                    " them via a fresh review before re-running")
+            attributed = [f for f in cv_facts
+                          if f.origin_evidence_id == existing.id
+                          or (f.origin_evidence_id is None and len(cv_rows) == 1)]
+            if not attributed:
+                # An evidence row with no facts at all means the earlier walk
+                # died before drafts persisted: nothing to resume, so fall
+                # through to a fresh extraction (the orphaned older row is
+                # acceptable residue).
+                say(f"This CV was stored earlier ({existing.title}) but its"
+                    " draft facts never landed; re-extracting.")
+                existing = None
+            else:
+                # Repair pass for data approved before the edge write moved
+                # ahead of the quantifier prompt: an approved active fact
+                # attributed here but lacking its active PROVES edge from
+                # this evidence row gets the missing link minted.
+                proven = {e.target_id for e in edges_repo.active_edges_from(
+                    "evidence", existing.id, "PROVES")}
+                unlinked = [f for f in attributed
+                            if f.user_approved and f.status == "active"
+                            and f.id not in proven]
+                for fact in unlinked:
+                    edges_repo.add(CareerEdge(
+                        id=new_id("edge"), source_type="evidence",
+                        source_id=existing.id, edge_type="PROVES",
+                        target_type="career_fact", target_id=fact.id,
+                        claim_kind="fact", provenance="onboarding:cv-confirmation",
+                        created_by="user", user_verified=1,
+                    ))
+                if unlinked:
+                    say(f"Repaired {len(unlinked)} approved facts that were"
+                        " missing their evidence link.")
+                pending = [f.id for f in attributed
+                           if not f.user_approved and f.status == "active"]
+                if pending:
+                    say(f"This CV was already ingested ({existing.title}); resuming"
+                        f" the confirmation walk over {len(pending)} pending draft facts.")
+                    _confirm_drafts(facts_repo, edges_repo, existing, pending, ask, say)
+                else:
+                    say(f"This CV was already ingested ({existing.title}) and its"
+                        " walk is complete; continuing with the remaining questions.")
+        if existing is None:
+            cv_evidence, extraction = _ingest_cv(conn, storage, model, cv_path,
+                                                 cv_bytes, content_hash, say)
+            experience_ids = _review_experiences(conn, extraction, ask, say)
+            draft_fact_ids = _persist_fact_drafts(conn, extraction, experience_ids,
+                                                  cv_evidence, say)
+            _confirm_drafts(facts_repo, edges_repo, cv_evidence, draft_fact_ids, ask, say)
     else:
         say("No CV given; starting from the interview questions.")
 
@@ -104,11 +175,11 @@ def _read_cv_text(cv_path: Path, cv_bytes: bytes) -> str:
 
 
 def _ingest_cv(conn: sqlite3.Connection, storage: StorageAdapter, model: ModelAdapter,
-               cv_path: Path, say: Callable[[str], None]) -> tuple[Evidence, CvExtraction]:
+               cv_path: Path, cv_bytes: bytes, content_hash: str,
+               say: Callable[[str], None]) -> tuple[Evidence, CvExtraction]:
     """Store the CV file, mint its evidence row, run extraction. Nothing the
     model drafted is persisted here: experiences and facts land only through
     the interactive review."""
-    cv_bytes = cv_path.read_bytes()
     cv_text = _read_cv_text(cv_path, cv_bytes)  # may raise CvReadError: degrade before storing
     evidence_id = new_id("ev")
     # Locator derives from the evidence id, not the original basename: a later
@@ -117,16 +188,18 @@ def _ingest_cv(conn: sqlite3.Connection, storage: StorageAdapter, model: ModelAd
     # stored file and its hash are always the original bytes (a PDF stays a PDF).
     locator = f"files/cv/{evidence_id}{cv_path.suffix}"
     storage.write_bytes(locator, cv_bytes)
-    evidence_repo = SqliteEvidenceRepository(conn)
-    cv_evidence = Evidence(
-        id=evidence_id, evidence_type="cv", title=cv_path.name, locator=locator,
-        content_hash=hashlib.sha256(cv_bytes).hexdigest(),
-    )
-    evidence_repo.add(cv_evidence)
-
     say(f"Stored CV at instance/{locator}; extracting structure (model proposes, you decide)...")
     service = CvExtractionService(model, load_prompt("cv_extraction.md"))
-    return cv_evidence, service.extract(cv_text)
+    extraction = service.extract(cv_text)
+    # The evidence row is the commit point, minted only once extraction
+    # succeeded: a failed extraction leaves no row, so a retry is a fresh
+    # ingest, never a hash match resuming a walk that never happened.
+    cv_evidence = Evidence(
+        id=evidence_id, evidence_type="cv", title=cv_path.name, locator=locator,
+        content_hash=content_hash,
+    )
+    SqliteEvidenceRepository(conn).add(cv_evidence)
+    return cv_evidence, extraction
 
 
 def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
@@ -136,10 +209,32 @@ def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
     dependent draft facts. Returns extraction index -> experience id (None
     where rejected)."""
     experiences_repo = SqliteExperienceRepository(conn)
+    # A re-extraction after an interrupted walk (experiences persist per
+    # answer, facts only after the walk) must not re-ask or duplicate what is
+    # already confirmed: an exact (kind, title, org, dates) match is reused.
+    # A reworded draft is still asked; only exact duplicates are prevented.
+    # Per-shape FIFO queues, each persisted row consumed at most once, so a
+    # CV legitimately carrying the same role twice keeps both rows: the
+    # replay reuses one per draft and asks for the rest as new.
+    existing_rows = experiences_repo.list_all()
+    by_shape: dict[tuple, list[Experience]] = {}
+    for row in sorted(existing_rows,
+                      key=lambda e: (e.display_order is None, e.display_order)):
+        by_shape.setdefault(
+            (row.kind, row.title, row.org, row.start_date, row.end_date),
+            []).append(row)
     say(f"Extracted {len(extraction.experiences)} experiences. Confirm, edit, or reject each.")
     experience_ids: list[str | None] = []
-    order = 0
+    order = max((e.display_order for e in existing_rows
+                 if e.display_order is not None), default=-1) + 1
     for draft in extraction.experiences:
+        queue = by_shape.get(
+            (draft.kind, draft.title, draft.org, draft.start_date, draft.end_date))
+        if queue:
+            say(f"\n[{draft.kind}] {draft.title} @ {draft.org}: already"
+                " confirmed earlier; reusing it.")
+            experience_ids.append(queue.pop(0).id)
+            continue
         say(f"\n[{draft.kind}] {draft.title} @ {draft.org}"
             f" ({draft.start_date or '?'} - {draft.end_date or 'present'})")
         action = _ask_choice(ask, say, "confirm/edit/reject",
@@ -165,10 +260,11 @@ def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
 
 
 def _persist_fact_drafts(conn: sqlite3.Connection, extraction: CvExtraction,
-                         experience_ids: list[str | None],
+                         experience_ids: list[str | None], cv_evidence: Evidence,
                          say: Callable[[str], None]) -> list[str]:
-    """Persist draft facts (user_approved=0, source='cv'), dropping any fact
-    whose experience was rejected in review."""
+    """Persist draft facts (user_approved=0, source='cv', origin recorded so a
+    resume walks only this CV's drafts), dropping any fact whose experience
+    was rejected in review."""
     facts_repo = SqliteCareerFactRepository(conn)
     fact_ids = []
     dropped = 0
@@ -182,6 +278,7 @@ def _persist_fact_drafts(conn: sqlite3.Connection, extraction: CvExtraction,
             experience_id=(experience_ids[draft.experience_index]
                            if draft.experience_index is not None else None),
             source_location=draft.source_location,
+            origin_evidence_id=cv_evidence.id,
         )
         facts_repo.add(fact)
         fact_ids.append(fact.id)
@@ -209,15 +306,18 @@ def _confirm_drafts(facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCa
             if edited:
                 statement = edited
         facts_repo.set_approval(fact_id, statement, _now())
-        # Inline metric backfill (OC-35, layer 1): one optional follow-up while
-        # context is freshest; a supplied restatement is a user edit, approved.
-        offer_quantifier(facts_repo, fact_id, statement, fact.fact_type, ask, say)
+        # The PROVES edge lands with the approval, before the optional
+        # quantifier prompt: stopping there must not strand an approved fact
+        # without its evidence link (a quantifier only edits the statement).
         edges_repo.add(CareerEdge(
             id=new_id("edge"), source_type="evidence", source_id=cv_evidence.id,
             edge_type="PROVES", target_type="career_fact", target_id=fact_id,
             claim_kind="fact", provenance="onboarding:cv-confirmation",
             created_by="user", user_verified=1,
         ))
+        # Inline metric backfill (OC-35, layer 1): one optional follow-up while
+        # context is freshest; a supplied restatement is a user edit, approved.
+        offer_quantifier(facts_repo, fact_id, statement, fact.fact_type, ask, say)
 
 
 def _link_evidence_to_capability(evidence_repo: SqliteEvidenceRepository,

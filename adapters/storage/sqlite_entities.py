@@ -53,7 +53,8 @@ class SqliteExperienceRepository(ExperienceRepository):
 
 class SqliteCareerFactRepository(CareerFactRepository):
     _SELECT = ("SELECT id, fact_type, statement, source, user_approved, experience_id,"
-               " status, confidence, source_location, created_at, verified_at FROM career_facts")
+               " status, confidence, source_location, created_at, verified_at,"
+               " origin_evidence_id FROM career_facts")
 
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
@@ -62,11 +63,12 @@ class SqliteCareerFactRepository(CareerFactRepository):
         with self._conn:
             self._conn.execute(
                 "INSERT INTO career_facts (id, experience_id, fact_type, statement, status,"
-                " confidence, source, source_location, user_approved, verified_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " confidence, source, source_location, user_approved, verified_at,"
+                " origin_evidence_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (fact.id, fact.experience_id, fact.fact_type, fact.statement, fact.status,
                  fact.confidence, fact.source, fact.source_location, fact.user_approved,
-                 fact.verified_at),
+                 fact.verified_at, fact.origin_evidence_id),
             )
 
     def get(self, fact_id: str) -> CareerFact | None:

@@ -428,6 +428,444 @@ def test_onboarding_ux_messages(instance, tmp_path):
         conn.close()
 
 
+class RaisingModel(ModelAdapter):
+    """The resume paths must never call the model; this one proves it."""
+
+    def complete(self, prompt: str) -> str:
+        raise AssertionError("the model was called on a resume path")
+
+
+def _interrupting(answers):
+    remaining = list(answers)
+
+    def ask(_prompt: str) -> str:
+        if not remaining:
+            raise KeyboardInterrupt
+        return remaining.pop(0)
+
+    return ask
+
+
+def test_onboard_resume_confirms_pending_drafts_without_the_model(instance, tmp_path):
+    """A re-run with the same CV bytes and pending cv-source drafts skips
+    storage, extraction, and the experience walk, and resumes the confirmation
+    walk over exactly the pending drafts (OC-36; resume derived from data,
+    never a stored cursor)."""
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\nBackend Engineer at Acme 2021-2023\n")
+    conn = _conn(instance)
+    try:
+        # First run: interrupted at the first fact confirmation, leaving all
+        # three drafts pending (every earlier answer already persisted).
+        with pytest.raises(KeyboardInterrupt):
+            run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                           ask=_interrupting(["confirm"]), say=lambda _: None)
+        drafts = [f for f in SqliteCareerFactRepository(conn).list_all()
+                  if f.source == "cv" and not f.user_approved]
+        assert len(drafts) == 3
+
+        says = []
+        answers = [
+            "confirm", "", "confirm", "", "confirm", "",  # 3 drafts, quantifiers skipped
+            "", "",                                       # capabilities, goals: none
+            "", "", "", "",                               # profile basics skipped
+        ]
+        run_onboarding(conn, LocalStorageAdapter(instance), RaisingModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+
+        assert any("resuming" in line for line in says)
+        # No duplicate ingestion: one cv evidence row, one experience.
+        cv_rows = [e for e in SqliteEvidenceRepository(conn).list_all()
+                   if e.evidence_type == "cv"]
+        assert len(cv_rows) == 1
+        assert len(SqliteExperienceRepository(conn).list_all()) == 1
+        facts = [f for f in SqliteCareerFactRepository(conn).list_all()
+                 if f.source == "cv"]
+        assert all(f.user_approved == 1 for f in facts)
+        # PROVES edges land on the existing evidence row.
+        edges = SqliteCareerEdgeRepository(conn).active_edges_from(
+            "evidence", cv_rows[0].id, "PROVES")
+        assert {e.target_id for e in edges} == {f.id for f in facts}
+    finally:
+        conn.close()
+
+
+def test_onboard_resume_with_walk_complete_skips_straight_to_gap_questions(
+        instance, tmp_path):
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\nBackend Engineer at Acme 2021-2023\n")
+    conn = _conn(instance)
+    try:
+        first = ["confirm", "confirm", "", "confirm", "", "confirm", "",
+                 "", "", "", "", "", ""]
+        run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                       ask=_scripted(first), say=lambda _: None)
+        facts_before = {f.id for f in SqliteCareerFactRepository(conn).list_all()}
+
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), RaisingModel(), cv,
+                       ask=_scripted(["", "", "", "", "", ""]), say=says.append)
+
+        assert any("walk is complete" in line for line in says)
+        assert len([e for e in SqliteEvidenceRepository(conn).list_all()
+                    if e.evidence_type == "cv"]) == 1
+        assert len(SqliteExperienceRepository(conn).list_all()) == 1
+        assert {f.id for f in SqliteCareerFactRepository(conn).list_all()} == facts_before
+    finally:
+        conn.close()
+
+
+def test_onboard_resume_scopes_to_the_matching_cvs_drafts(instance, tmp_path):
+    """Pending drafts from two different CVs: resuming one CV walks only its
+    own drafts (origin_evidence_id scoping) and never touches the other's."""
+    class PerCvModel(ModelAdapter):
+        """Distinct experiences per CV, so the runs share nothing reusable."""
+
+        def __init__(self, name: str):
+            self._name = name
+
+        def complete(self, prompt: str) -> str:
+            return json.dumps({
+                "experiences": [{"kind": "role", "title": f"Engineer {self._name}",
+                                 "org": self._name, "start_date": "2021",
+                                 "end_date": "2023", "summary": None}],
+                "facts": [
+                    {"experience_index": 0, "fact_type": "achievement",
+                     "statement": f"Achievement one at {self._name}",
+                     "source_location": None},
+                    {"experience_index": 0, "fact_type": "scope",
+                     "statement": f"Scope two at {self._name}",
+                     "source_location": None},
+                    {"experience_index": None, "fact_type": "skill_use",
+                     "statement": f"Skill three at {self._name}",
+                     "source_location": None},
+                ],
+            })
+
+    conn = _conn(instance)
+    try:
+        cvs = {}
+        for name, body in (("a", "first CV body\n"), ("b", "second CV body\n")):
+            cv = tmp_path / name / "cv.txt"
+            cv.parent.mkdir()
+            cv.write_text(body)
+            cvs[name] = cv
+            with pytest.raises(KeyboardInterrupt):
+                run_onboarding(conn, LocalStorageAdapter(instance), PerCvModel(name), cv,
+                               ask=_interrupting(["confirm"]), say=lambda _: None)
+        cv_rows = {e.content_hash: e for e in SqliteEvidenceRepository(conn).list_all()
+                   if e.evidence_type == "cv"}
+        assert len(cv_rows) == 2
+
+        answers = ["confirm", "", "confirm", "", "confirm", "",
+                   "", "", "", "", "", ""]
+        run_onboarding(conn, LocalStorageAdapter(instance), RaisingModel(), cvs["a"],
+                       ask=_scripted(answers), say=lambda _: None)
+
+        a_row = cv_rows[hashlib.sha256(cvs["a"].read_bytes()).hexdigest()]
+        drafts = [f for f in SqliteCareerFactRepository(conn).list_all()
+                  if f.source == "cv"]
+        for fact in drafts:
+            if fact.origin_evidence_id == a_row.id:
+                assert fact.user_approved == 1
+            else:
+                assert fact.user_approved == 0 and fact.status == "active"
+    finally:
+        conn.close()
+
+
+def test_onboard_resume_refuses_ambiguous_null_provenance(instance, tmp_path):
+    """Legacy drafts (origin NULL) resolve to the single cv evidence row; with
+    several cv rows the attribution would be a guess, so resume refuses."""
+    conn = _conn(instance)
+    try:
+        cvs = []
+        for name, body in (("a", "first CV body\n"), ("b", "second CV body\n")):
+            cv = tmp_path / name / "cv.txt"
+            cv.parent.mkdir()
+            cv.write_text(body)
+            cvs.append(cv)
+            with pytest.raises(KeyboardInterrupt):
+                run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                               ask=_interrupting(["confirm"]), say=lambda _: None)
+        with conn:
+            conn.execute("UPDATE career_facts SET origin_evidence_id = NULL")
+        with pytest.raises(ValueError, match="no CV provenance"):
+            run_onboarding(conn, LocalStorageAdapter(instance), RaisingModel(), cvs[0],
+                           ask=_scripted([]), say=lambda _: None)
+    finally:
+        conn.close()
+
+
+def test_onboard_resume_null_provenance_with_one_cv_row_still_resumes(
+        instance, tmp_path):
+    """The live-instance case: pre-0005 drafts (origin NULL) and exactly one
+    cv evidence row resume as that row's drafts."""
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    conn = _conn(instance)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                           ask=_interrupting(["confirm"]), say=lambda _: None)
+        with conn:
+            conn.execute("UPDATE career_facts SET origin_evidence_id = NULL")
+        answers = ["confirm", "", "confirm", "", "confirm", "",
+                   "", "", "", "", "", ""]
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), RaisingModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        assert any("resuming" in line for line in says)
+        assert all(f.user_approved == 1
+                   for f in SqliteCareerFactRepository(conn).list_all()
+                   if f.source == "cv")
+    finally:
+        conn.close()
+
+
+def test_failed_extraction_leaves_no_evidence_row_and_retry_re_extracts(
+        instance, tmp_path):
+    """The evidence row is the commit point: a failed extraction leaves no
+    row, so the retry is a fresh ingest, never a false hash-match resume."""
+    from adapters.models.claude_code import ModelCallError
+
+    class FailingModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            raise ModelCallError("simulated failure")
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    conn = _conn(instance)
+    try:
+        with pytest.raises(ModelCallError):
+            run_onboarding(conn, LocalStorageAdapter(instance), FailingModel(), cv,
+                           ask=_scripted([]), say=lambda _: None)
+        assert [e for e in SqliteEvidenceRepository(conn).list_all()
+                if e.evidence_type == "cv"] == []
+
+        answers = ["confirm", "confirm", "", "confirm", "", "confirm", "",
+                   "", "", "", "", "", ""]
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        assert not any("already ingested" in line for line in says)
+        cv_rows = [e for e in SqliteEvidenceRepository(conn).list_all()
+                   if e.evidence_type == "cv"]
+        assert len(cv_rows) == 1
+    finally:
+        conn.close()
+
+
+def test_interrupt_before_drafts_re_extracts_instead_of_resuming_complete(
+        instance, tmp_path):
+    """An evidence row with zero originated facts means the walk died before
+    drafts persisted: the re-run re-extracts rather than declaring the walk
+    complete."""
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    conn = _conn(instance)
+    try:
+        # Interrupt at the first experience prompt: evidence row persisted
+        # (extraction succeeded) but no draft facts yet.
+        with pytest.raises(KeyboardInterrupt):
+            run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                           ask=_interrupting([]), say=lambda _: None)
+        assert len([e for e in SqliteEvidenceRepository(conn).list_all()
+                    if e.evidence_type == "cv"]) == 1
+        assert [f for f in SqliteCareerFactRepository(conn).list_all()
+                if f.source == "cv"] == []
+
+        answers = ["confirm", "confirm", "", "confirm", "", "confirm", "",
+                   "", "", "", "", "", ""]
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        assert any("never landed" in line for line in says)
+        facts = [f for f in SqliteCareerFactRepository(conn).list_all()
+                 if f.source == "cv"]
+        assert len(facts) == 3 and all(f.user_approved == 1 for f in facts)
+    finally:
+        conn.close()
+
+
+def test_interrupt_mid_experience_walk_never_duplicates_confirmed_experiences(
+        instance, tmp_path):
+    """Experiences persist per answer but facts only after the walk: a re-run
+    after an interrupt re-extracts, reuses the exactly-matching confirmed
+    experience without asking again, and asks only the remaining ones."""
+    extraction = json.dumps({
+        "experiences": [
+            {"kind": "role", "title": "Backend Engineer", "org": "Acme",
+             "start_date": "2021", "end_date": "2023", "summary": None},
+            {"kind": "project", "title": "Side Tool", "org": "Self",
+             "start_date": "2024", "end_date": None, "summary": None},
+        ],
+        "facts": [
+            {"experience_index": 0, "fact_type": "achievement",
+             "statement": "Built the order service", "source_location": None},
+            {"experience_index": 1, "fact_type": "achievement",
+             "statement": "Shipped the side tool", "source_location": None},
+        ],
+    })
+
+    class TwoExperienceModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            return extraction
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    conn = _conn(instance)
+    try:
+        # Accept experience one, interrupt at experience two: one experience
+        # persisted, zero facts.
+        with pytest.raises(KeyboardInterrupt):
+            run_onboarding(conn, LocalStorageAdapter(instance), TwoExperienceModel(), cv,
+                           ask=_interrupting(["confirm"]), say=lambda _: None)
+        assert len(SqliteExperienceRepository(conn).list_all()) == 1
+
+        # Re-run: the confirmed experience is reused without a prompt (the
+        # script would misalign if it were re-asked), the second is asked.
+        answers = [
+            "confirm",                    # experience two only
+            "confirm", "", "confirm", "",  # both facts, quantifiers skipped
+            "", "",                        # capabilities, goals
+            "", "", "", "",                # basics skipped
+        ]
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), TwoExperienceModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        assert any("already confirmed earlier; reusing it" in line for line in says)
+        experiences = SqliteExperienceRepository(conn).list_all()
+        assert sorted(e.title for e in experiences) == ["Backend Engineer", "Side Tool"]
+        orders = {e.title: e.display_order for e in experiences}
+        assert orders["Backend Engineer"] == 0 and orders["Side Tool"] == 1
+        facts = [f for f in SqliteCareerFactRepository(conn).list_all()
+                 if f.source == "cv"]
+        assert len(facts) == 2 and all(f.user_approved == 1 for f in facts)
+    finally:
+        conn.close()
+
+
+def test_replay_keeps_legitimately_repeated_identical_experiences_distinct(
+        instance, tmp_path):
+    """A CV can carry the same role twice (same kind, title, org, dates): the
+    replay walk consumes each persisted match at most once, so the second
+    identical draft is asked and minted as its own row, and each entry's
+    facts attach to their own experience."""
+    shape = {"kind": "role", "title": "Contract Engineer", "org": "Acme",
+             "start_date": "2021", "end_date": "2023", "summary": None}
+    extraction = json.dumps({
+        "experiences": [dict(shape), dict(shape)],
+        "facts": [
+            {"experience_index": 0, "fact_type": "achievement",
+             "statement": "First stint achievement", "source_location": None},
+            {"experience_index": 1, "fact_type": "achievement",
+             "statement": "Second stint achievement", "source_location": None},
+        ],
+    })
+
+    class RepeatedRoleModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            return extraction
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    conn = _conn(instance)
+    try:
+        # Accept the first identical entry, interrupt at the second.
+        with pytest.raises(KeyboardInterrupt):
+            run_onboarding(conn, LocalStorageAdapter(instance), RepeatedRoleModel(), cv,
+                           ask=_interrupting(["confirm"]), say=lambda _: None)
+        assert len(SqliteExperienceRepository(conn).list_all()) == 1
+
+        # Replay: entry one reuses the persisted row, entry two is asked (the
+        # scripted answers prove the ask happened by alignment).
+        answers = [
+            "confirm",                     # the second identical entry
+            "confirm", "", "confirm", "",  # both facts, quantifiers skipped
+            "", "",                        # capabilities, goals
+            "", "", "", "",                # basics skipped
+        ]
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), RepeatedRoleModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        assert any("reusing it" in line for line in says)
+        experiences = SqliteExperienceRepository(conn).list_all()
+        assert len(experiences) == 2
+        assert len({e.id for e in experiences}) == 2
+        facts = {f.statement: f for f in SqliteCareerFactRepository(conn).list_all()
+                 if f.source == "cv"}
+        first, second = facts["First stint achievement"], facts["Second stint achievement"]
+        assert first.experience_id != second.experience_id
+        assert {first.experience_id, second.experience_id} == {e.id for e in experiences}
+    finally:
+        conn.close()
+
+
+def test_quantifier_interrupt_never_strands_an_approved_fact_without_its_edge(
+        instance, tmp_path):
+    """The PROVES edge lands with the approval, before the quantifier prompt,
+    and the resume path repairs legacy approved facts missing their link
+    without duplicating edges that exist."""
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    conn = _conn(instance)
+    edges_repo = SqliteCareerEdgeRepository(conn)
+    try:
+        # Confirm fact one, interrupt while its quantifier prompt is pending.
+        with pytest.raises(KeyboardInterrupt):
+            run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                           ask=_interrupting(["confirm", "confirm"]), say=lambda _: None)
+        cv_row = [e for e in SqliteEvidenceRepository(conn).list_all()
+                  if e.evidence_type == "cv"][0]
+        approved = [f for f in SqliteCareerFactRepository(conn).list_all()
+                    if f.source == "cv" and f.user_approved]
+        assert len(approved) == 1
+        edges = edges_repo.active_edges_from("evidence", cv_row.id, "PROVES")
+        assert [e.target_id for e in edges] == [approved[0].id]  # edge already there
+
+        # Simulate a pre-fix instance: the approved fact lost its edge.
+        with conn:
+            conn.execute("DELETE FROM career_edges WHERE target_id = ?",
+                         (approved[0].id,))
+
+        # Resume: the two remaining drafts are walked, the missing edge is
+        # repaired, and no fact ends up with duplicates.
+        answers = ["confirm", "", "confirm", "",
+                   "", "", "", "", "", ""]
+        says = []
+        run_onboarding(conn, LocalStorageAdapter(instance), RaisingModel(), cv,
+                       ask=_scripted(answers), say=says.append)
+        assert any("Repaired 1 approved facts" in line for line in says)
+        facts = [f for f in SqliteCareerFactRepository(conn).list_all()
+                 if f.source == "cv"]
+        assert all(f.user_approved == 1 for f in facts)
+        by_target: dict[str, int] = {}
+        for e in edges_repo.active_edges_from("evidence", cv_row.id, "PROVES"):
+            by_target[e.target_id] = by_target.get(e.target_id, 0) + 1
+        assert by_target == {f.id: 1 for f in facts}  # exactly one edge each
+    finally:
+        conn.close()
+
+
+def test_onboard_with_a_different_cv_hash_ingests_fresh(instance, tmp_path):
+    """A changed CV behaves as today: new extraction, new evidence row."""
+    conn = _conn(instance)
+    answers = ["confirm", "confirm", "", "confirm", "", "confirm", "",
+               "", "", "", "", "", ""]
+    try:
+        for name, content in (("cv.txt", "first body\n"), ("cv2.txt", "second body\n")):
+            cv = tmp_path / name
+            cv.write_text(content)
+            run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                           ask=_scripted(answers), say=lambda _: None)
+        cv_rows = [e for e in SqliteEvidenceRepository(conn).list_all()
+                   if e.evidence_type == "cv"]
+        assert len(cv_rows) == 2
+    finally:
+        conn.close()
+
+
 def test_onboarding_with_cv_requires_a_model(instance, tmp_path):
     cv = tmp_path / "cv.txt"
     cv.write_text("text")
