@@ -315,6 +315,21 @@ class GroundingVerifier:
                     "coverage", section,
                     f"confirmed {row['kind']} row '{experience_id}' must render"
                     " in this section (skeleton-only when factless)"))
+        # Husk gate, verifier side: when the walk reached experience-backed
+        # approved facts, at least one experience entry must render one of
+        # them; a header-only document must never verify.
+        facts = self._view["facts"]
+        if any(f["experience_id"] for f in facts.values()):
+            renders_a_fact = any(
+                fact is not None and fact["experience_id"] == entry.experience_id
+                for entry in cv.experiences for bullet in entry.bullets
+                for fact in [facts.get(fact_id) for fact_id in bullet.fact_ids])
+            if not renders_a_fact:
+                findings.append(Finding(
+                    "coverage", "experiences",
+                    "the context has experience-backed approved facts; at least"
+                    " one experience entry must render one (a header-only"
+                    " document is a husk, not a CV)"))
         return findings
 
     def _check_experience_order(self, cv: CvModel) -> list[Finding]:

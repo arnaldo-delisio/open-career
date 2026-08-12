@@ -129,6 +129,21 @@ def test_model_draft_omitting_factless_education_is_corrected():
     assert [e.experience_id for e in result.cv.education] == ["exp_edu"]
 
 
+def test_header_only_husk_fails_and_is_corrected():
+    """An otherwise-valid model response with empty summary, skills, and
+    experiences must not verify when the walk reached experience-backed
+    facts; the retry names the finding."""
+    context = make_context()
+    good = make_cv()
+    husk = replace(good, summary="", skills=(), experiences=())
+    model = FakeModel([husk.to_json(), good.to_json()])
+    result = CvDraftingService(model, "PROMPT {context_json}").draft(
+        context, "2026-08-11T00:00:00Z")
+    assert result.report.passed and result.attempts == 2 and not result.fallback_used
+    assert "husk" in model.prompts[1]
+    assert result.cv.experiences
+
+
 def test_prompt_contains_context_snapshot():
     context = make_context()
     model = FakeModel([make_cv().to_json()])

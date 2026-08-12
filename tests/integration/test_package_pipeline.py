@@ -467,3 +467,23 @@ def test_cli_export_defaults_to_the_approved_version(env, tmp_path, monkeypatch)
     out = tmp_path / "exported" / "cv.pdf"
     cli_main(["package", "export", "--out", str(out)])  # id omitted
     assert out.read_bytes().startswith(b"%PDF")
+
+
+def test_header_only_model_response_never_ships(env):
+    """A model that keeps returning a valid-schema header-only CV cannot ship
+    the husk: every draft fails verification and generation falls back to the
+    verbatim model, which carries the experience-backed fact."""
+    from domain.cv_model import parse_cv_model
+
+    conn, storage = env
+    from dataclasses import replace
+
+    husk = replace(parse_cv_model(_model_json(conn)),
+                   summary="", skills=(), experiences=())
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([husk.to_json()] * 3), "FDE", 1, lambda _s: None)
+    assert result.status == VERIFIED and "fallback" in result.detail
+    version = SqlitePackageRepository(conn).get_version(result.version_id)
+    content = json.loads(version.content_model_json)
+    assert [e["experience_id"] for e in content["experiences"]] == ["exp_1"]
+    assert content["experiences"][0]["bullets"]
