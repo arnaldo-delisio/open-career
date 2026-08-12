@@ -410,3 +410,23 @@ def test_confirmed_factless_education_renders_skeleton_only(env):
     assert [e["experience_id"] for e in content["education"]] == ["exp_edu"]
     assert content["education"][0]["bullets"] == []
     assert {e["experience_id"] for e in content["experiences"]} == {"exp_1"}
+
+
+def test_review_edit_stamps_the_current_strategy_version(env):
+    """A review regeneration under a newer approved strategy version stamps
+    that version in code; stale metadata from the reviewed version never
+    carries over."""
+    conn, storage = env
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    FamilyStrategyService(conn).set_emphasis("rf_1", 2)  # mints version 2
+    grounded_edit = ("Reduced onboarding time by 40% for 12 enterprise customers"
+                     " by automating the Python deployment pipeline")
+    answers = iter(["e", "0", grounded_edit])
+    package_cmd.run_review(conn, storage, None, result.version_id, 1,
+                           lambda _p: next(answers), lambda _s: None)
+    repo = SqlitePackageRepository(conn)
+    versions = repo.list_versions(repo.get_version(result.version_id).package_id)
+    assert len(versions) == 2 and versions[-1].status == VERIFIED
+    meta = json.loads(versions[-1].content_model_json)["meta"]
+    assert meta["strategy_version"] == 2

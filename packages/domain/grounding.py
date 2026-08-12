@@ -122,6 +122,11 @@ class GroundingVerifier:
         if cv.meta.role_family_id != self._context.role_family_id:
             findings.append(Finding("traceability", "meta",
                                     "role_family_id does not match the generation context"))
+        if cv.meta.strategy_version != self._context.strategy.strategy_version:
+            findings.append(Finding(
+                "traceability", "meta",
+                "strategy_version does not match the generation context"
+                " (the strategy audit trail must match the context snapshot)"))
         return findings
 
     def _check_header(self, cv: CvModel) -> list[Finding]:

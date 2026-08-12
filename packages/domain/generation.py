@@ -120,10 +120,16 @@ class CvDraftingService:
             attempts += 1
             raw = self._model.complete(prompt + failure)
             try:
-                # The header is built in code from user_profile, whatever the
-                # model returned: contact fields can be neither omitted nor
-                # altered by model output.
-                cv = replace(parse_cv_model(raw), header=build_header(context))
+                # The header is built in code from user_profile, and the meta
+                # identity fields are stamped from the generation context,
+                # whatever the model returned: contact fields and the strategy
+                # audit trail can be neither omitted nor altered by model
+                # output.
+                cv = parse_cv_model(raw)
+                cv = replace(cv, header=build_header(context),
+                             meta=replace(cv.meta,
+                                          role_family_id=context.role_family_id,
+                                          strategy_version=context.strategy.strategy_version))
             except CvModelError as e:
                 failure = ("\n\nYour previous output failed schema validation: "
                            f"{e}\nReturn only corrected JSON matching the schema exactly.")

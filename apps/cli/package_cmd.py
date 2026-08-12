@@ -9,6 +9,7 @@ export: defaults to the approved version, revalidates stored bytes against
 the recorded hash. recover: claims expired leases, reconciles orphan objects
 by locator."""
 
+import dataclasses
 import hashlib
 import json
 import sqlite3
@@ -320,7 +321,7 @@ def run_review(conn: sqlite3.Connection, storage: StorageAdapter,
     package = repo.get_package(version.package_id)
     family_ref = package.role_family_id
     context = build_context(conn, family_ref)
-    edited = _with_bullet_text(cv, entry.experience_id, i, new_text)
+    edited = _with_bullet_text(cv, context, entry.experience_id, i, new_text)
     report = GroundingVerifier(context).verify(edited)
     if not report.passed:
         say("The edit is not grounded in approved career state:")
@@ -335,7 +336,7 @@ def run_review(conn: sqlite3.Connection, storage: StorageAdapter,
         if fact_id is None:
             return
         context = build_context(conn, family_ref)  # re-walk with the new fact
-        edited = _with_bullet_text(cv, entry.experience_id, i, new_text,
+        edited = _with_bullet_text(cv, context, entry.experience_id, i, new_text,
                                    extra_fact_id=fact_id)
         report = GroundingVerifier(context).verify(edited)
         if not report.passed:
@@ -347,7 +348,8 @@ def run_review(conn: sqlite3.Connection, storage: StorageAdapter,
     run_generate(conn, storage, model, family_ref, page_budget, say, edited_model=edited)
 
 
-def _with_bullet_text(cv: CvModel, experience_id: str, bullet_index: int, text: str,
+def _with_bullet_text(cv: CvModel, context: GenerationContext, experience_id: str,
+                      bullet_index: int, text: str,
                       extra_fact_id: str | None = None) -> CvModel:
     def patch_entries(entries):
         patched = []
@@ -362,10 +364,14 @@ def _with_bullet_text(cv: CvModel, experience_id: str, bullet_index: int, text: 
             patched.append(CvExperienceEntry(**{**entry.__dict__, "bullets": tuple(bullets)}))
         return tuple(patched)
 
+    # The edited model regenerates under the CURRENT context: meta identity
+    # fields are stamped in code, never carried stale from the old version.
+    meta = dataclasses.replace(cv.meta, role_family_id=context.role_family_id,
+                               strategy_version=context.strategy.strategy_version)
     return CvModel(header=cv.header, summary=cv.summary, skills=cv.skills,
                    experiences=patch_entries(cv.experiences),
                    projects=patch_entries(cv.projects),
-                   education=patch_entries(cv.education), meta=cv.meta)
+                   education=patch_entries(cv.education), meta=meta)
 
 
 def run_export(conn: sqlite3.Connection, storage: StorageAdapter, ref: str | None,

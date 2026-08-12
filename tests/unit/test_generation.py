@@ -99,6 +99,21 @@ def test_verbatim_model_renders_factless_education_skeleton_only():
     assert report.passed, report.to_json()
 
 
+def test_model_cannot_stamp_meta_identity_fields():
+    """role_family_id and strategy_version come from the context in code: an
+    otherwise grounded draft carrying wrong values is corrected, not trusted."""
+    context = make_context()
+    good = make_cv()
+    tampered = replace(good, meta=replace(good.meta, role_family_id="rf_evil",
+                                          strategy_version=99))
+    model = FakeModel([tampered.to_json()])
+    result = CvDraftingService(model, "PROMPT {context_json}").draft(
+        context, "2026-08-11T00:00:00Z")
+    assert result.report.passed and result.attempts == 1
+    assert result.cv.meta.role_family_id == "rf_1"
+    assert result.cv.meta.strategy_version == 1
+
+
 def test_model_draft_omitting_factless_education_is_corrected():
     """Successful model path: a draft that omits a confirmed factless
     education row fails verification with the coverage rule named, and the

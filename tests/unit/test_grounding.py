@@ -221,6 +221,18 @@ def test_poisoned_strategy_cannot_leak_into_summary():
     assert "numbers-dates" in rules(number)
 
 
+def test_mismatched_strategy_version_fails():
+    """The meta strategy_version must match the generation context: the
+    strategy audit trail cannot be stamped by the model."""
+    base = make_cv()
+    cv = CvModel(header=base.header, summary=base.summary, skills=base.skills,
+                 experiences=base.experiences,
+                 meta=CvMeta(role_family_id="rf_1", strategy_version=7,
+                             generated_at="2026-08-11T00:00:00Z"))
+    report = verify(cv)
+    assert "traceability" in rules(report)
+
+
 def test_header_must_match_profile():
     report = verify(make_cv(header=CvHeader(name="Someone Else")))
     assert "header" in rules(report)
