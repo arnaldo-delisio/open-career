@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<!-- Single-column ATS-safe CV template (OC-34; spec:
+     decisions/package-generation-design.md, "Render path"). Contains zero
+     personal data (OC-26): every value arrives from the content model at
+     render time. ATS defenses baked into the CSS, not post-hoc: static
+     system font stack (the variable-font "SUM M ARY" extractor bug),
+     ligatures disabled (the fi/fl mojibake bug). Adapted as ideas, with
+     attribution, from career-ops (MIT) and ai-job-search; written fresh. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CV</title>
+<style>
+  @page { size: A4; margin: 14mm 16mm; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: Arial, Helvetica, "Liberation Sans", "DejaVu Sans", sans-serif;
+    font-variant-ligatures: none;
+    font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "hlig" 0;
+    font-size: 10pt; line-height: 1.35; color: #111;
+  }
+  .name { font-size: 17pt; font-weight: bold; margin: 0 0 2pt 0; }
+  .contact { margin: 0 0 8pt 0; }
+  h2 {
+    font-size: 10.5pt; text-transform: uppercase; letter-spacing: 0.5pt;
+    border-bottom: 1px solid #444; padding-bottom: 1pt; margin: 10pt 0 4pt 0;
+  }
+  .entry { margin: 0 0 6pt 0; }
+  .entry-head { font-weight: bold; }
+  ul { margin: 2pt 0 0 0; padding-left: 14pt; }
+  li { margin: 0 0 1.5pt 0; }
+  p { margin: 0 0 4pt 0; }
+</style>
+</head>
+<body>
+$body
+</body>
+</html>
