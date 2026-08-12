@@ -13,8 +13,11 @@ import hashlib
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
+
+from adapters.storage.instance import instance_dir
 
 from adapters.storage.family_strategy import FamilyStrategyService
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
@@ -99,7 +102,28 @@ def make_pipeline(conn: sqlite3.Connection, storage: StorageAdapter,
     drafter = (CvDraftingService(model, load_prompt("cv_generation.md"))
                if model is not None else None)
     return GenerationPipeline(SqlitePackageRepository(conn), storage,
-                              PlaywrightCvRenderer(), PopplerPdfTextExtractor(), drafter)
+                              PlaywrightCvRenderer(), PopplerPdfTextExtractor(), drafter,
+                              heartbeat_repo_factory=heartbeat_repo_factory(conn))
+
+
+def heartbeat_repo_factory(conn: sqlite3.Connection):
+    """The heartbeat thread's repository: a dedicated connection to the same
+    database file, opened inside the thread (sqlite connections are
+    single-thread by default; sharing the worker's connection across threads
+    raises ProgrammingError on every renewal). None for an in-memory db."""
+    db_file = conn.execute("PRAGMA database_list").fetchone()[2]
+    if not db_file:
+        return None
+
+    @contextmanager
+    def factory():
+        heartbeat_conn = sqlite3.connect(db_file)
+        try:
+            yield SqlitePackageRepository(heartbeat_conn)
+        finally:
+            heartbeat_conn.close()
+
+    return factory
 
 
 def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
@@ -110,6 +134,7 @@ def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
         raise PackageCliError(
             "the family targets no capabilities (confirm TARGETS via"
             " `open-career families edit`)")
+    _require_renderable_experience(context)
     repo = SqlitePackageRepository(conn)
     package = repo.get_or_create_base_package(context.role_family_id)
     for gap in context.selection.gaps:
@@ -118,6 +143,32 @@ def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
         package.id, context, page_budget=page_budget, edited_model=edited_model)
     say(f"version {result.version_id}: {result.status} ({result.detail})")
     return result
+
+
+def _require_renderable_experience(context: GenerationContext) -> None:
+    """The husk gate: if the family's walk reaches no fact attached to an
+    experience, the CV would render as a contact header plus skill names.
+    Fail honestly with the missing links named instead of stamping VERIFIED
+    on an empty document. Gaps beside at least one real experience entry stay
+    a report, not a failure."""
+    if any(fc.experience is not None
+           for s in context.selection.selections for chain in s.chains
+           for fc in chain.facts):
+        return
+    lines = ["the walk reaches no experience-backed fact; refusing to generate"
+             " a CV with zero experience entries"]
+    for selection in context.selection.selections:
+        name = selection.capability.name
+        if not selection.covered:
+            lines.append(f"  uncovered capability '{name}': no eligible"
+                         " evidence SUPPORTS it")
+        else:
+            lines.append(f"  capability '{name}': its supporting evidence proves"
+                         " no fact attached to an experience")
+    lines.append("link evidence that proves your confirmed experience facts to"
+                 " the targeted capabilities: `open-career edges add` (SUPPORTS:"
+                 " evidence -> capability), or re-run `open-career onboard`")
+    raise PackageCliError("\n".join(lines))
 
 
 def _version_or_die(repo: SqlitePackageRepository, version_id: str) -> PackageVersion:
@@ -167,6 +218,11 @@ def run_show(conn: sqlite3.Connection, ref: str, as_json: bool, say: Say) -> Non
         say(json.dumps(payload, indent=2))
         return
     say(f"version {version.id} (v{version.version}, {version.status})")
+    # Locators are storage-relative; print the real on-disk paths.
+    if version.artifact_locator:
+        say(f"  artifact: {instance_dir() / version.artifact_locator}")
+    if version.context_snapshot_locator:
+        say(f"  context snapshot: {instance_dir() / version.context_snapshot_locator}")
     cv = parse_cv_model(version.content_model_json) if version.content_model_json else None
     if cv:
         say(f"  summary: {cv.summary or '(dropped)'}")

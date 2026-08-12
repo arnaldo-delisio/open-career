@@ -4,7 +4,10 @@ check passes; poisoned context asserting nothing unapproved renders; the
 review write-back loop; export hash validation; lease recovery."""
 
 import json
+import pathlib
 import sqlite3
+import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -23,9 +26,10 @@ from adapters.storage.sqlite_profile import SqliteUserProfileRepository
 from apps.cli import package_cmd
 from domain.edges import CareerEdge
 from domain.entities import Capability, CareerFact, Evidence, Experience, RoleFamily
-from domain.generation import build_verbatim_model
+from domain.generation import DraftResult, build_verbatim_model
+from domain.grounding import GroundingVerifier
 from domain.packages import APPROVED, FAILED, VERIFIED
-from domain.pipeline import recover_expired
+from domain.pipeline import GenerationPipeline, recover_expired
 from domain.ports import ModelAdapter
 
 
@@ -197,6 +201,139 @@ def test_recover_claims_expired_and_reports_orphans(env):
     assert claimed.status == FAILED
     assert "interrupted" in claimed.failure_report_json
     assert any("orphan" in s for s in said)
+
+
+# --- heartbeat threading regression (drive 2026-08-11) ----------------------
+# The heartbeat renews the lease from its own thread. With sqlite's default
+# check_same_thread=True, sharing the worker's connection raised
+# ProgrammingError on the first renewal, was swallowed into renewed=False, and
+# every real generation self-terminated at the first heartbeat interval. The
+# heartbeat must run against its own dedicated connection.
+
+
+class _SlowVerbatimDrafter:
+    """Real drafting seam that outlasts several heartbeat intervals without a
+    model call: sleeps, then returns the deterministic verbatim model."""
+
+    def __init__(self, delay: float):
+        self._delay = delay
+
+    def draft(self, context, generated_at):
+        time.sleep(self._delay)
+        cv, dropped = build_verbatim_model(context, generated_at)
+        return DraftResult(cv=cv, report=GroundingVerifier(context).verify(cv),
+                           attempts=1, fallback_used=True, dropped=dropped)
+
+
+def _real_pipeline(conn, storage, drafter, heartbeat_repo_factory):
+    from adapters.render.html_pdf import PlaywrightCvRenderer
+    from adapters.render.pdftext import PopplerPdfTextExtractor
+    return GenerationPipeline(SqlitePackageRepository(conn), storage,
+                              PlaywrightCvRenderer(), PopplerPdfTextExtractor(),
+                              drafter, heartbeat_repo_factory=heartbeat_repo_factory)
+
+
+def test_generation_survives_heartbeats_on_a_real_thread(env, tmp_path, monkeypatch):
+    """Real heartbeat thread, real temp database file, no model call: the
+    generation spans several heartbeat intervals, every renewal succeeds on
+    the heartbeat's own connection, and the version finalizes VERIFIED."""
+    conn, storage = env
+    db_file = tmp_path / "instance" / "open-career.sqlite3"
+    monkeypatch.setattr("domain.pipeline.HEARTBEAT_INTERVAL_SECONDS", 0.05)
+    renewals = []
+
+    class CountingRepo(SqlitePackageRepository):
+        def renew_lease(self, *args):
+            renewed = super().renew_lease(*args)
+            renewals.append(renewed)
+            return renewed
+
+    @contextmanager
+    def heartbeat_repo():
+        heartbeat_conn = sqlite3.connect(db_file)
+        try:
+            yield CountingRepo(heartbeat_conn)
+        finally:
+            heartbeat_conn.close()
+
+    context = package_cmd.build_context(conn, "FDE")
+    package = SqlitePackageRepository(conn).get_or_create_base_package("rf_1")
+    pipeline = _real_pipeline(conn, storage, _SlowVerbatimDrafter(0.4), heartbeat_repo)
+    result = pipeline.generate(package.id, context)
+    assert result.status == VERIFIED
+    assert renewals and all(renewals)  # the heartbeat actually beat, and held
+
+
+def test_heartbeat_infrastructure_error_is_reported_as_such(env, tmp_path, monkeypatch):
+    """A renewal that raises is an infrastructure failure, not a lost lease:
+    the worker stops, marks the version FAILED under its still-live lease, and
+    the report never claims recovery owns a row recover would leave alone."""
+    conn, storage = env
+    monkeypatch.setattr("domain.pipeline.HEARTBEAT_INTERVAL_SECONDS", 0.05)
+
+    class BrokenRepo:
+        def renew_lease(self, *args):
+            raise sqlite3.ProgrammingError(
+                "SQLite objects created in a thread can only be used in that same thread")
+
+    @contextmanager
+    def heartbeat_repo():
+        yield BrokenRepo()
+
+    context = package_cmd.build_context(conn, "FDE")
+    package = SqlitePackageRepository(conn).get_or_create_base_package("rf_1")
+    pipeline = _real_pipeline(conn, storage, _SlowVerbatimDrafter(0.3), heartbeat_repo)
+    result = pipeline.generate(package.id, context)
+    assert result.status == FAILED
+    assert "infrastructure" in result.detail and "ProgrammingError" in result.detail
+    assert "recovery owns" not in result.detail
+    version = SqlitePackageRepository(conn).get_version(result.version_id)
+    assert version.status == FAILED  # failed under the live lease, not orphaned
+    assert "infrastructure" in version.failure_report_json
+
+
+# --- husk gate (drive 2026-08-11): no experience reached, no VERIFIED CV ----
+
+
+def test_generate_refuses_a_zero_experience_husk(env):
+    conn, storage = env
+    with conn:
+        conn.execute("UPDATE career_facts SET experience_id = NULL WHERE id = 'fact_1'")
+    with pytest.raises(package_cmd.PackageCliError) as excinfo:
+        package_cmd.run_generate(conn, storage, None, "FDE", 1, lambda _s: None)
+    message = str(excinfo.value)
+    assert "zero experience entries" in message
+    assert "Python" in message  # the starved capability is named
+    assert "edges add" in message  # and the repair path is pointed at
+
+
+def test_generate_with_a_gap_capability_still_succeeds_with_report(env):
+    conn, storage = env
+    SqliteCapabilityRepository(conn).add(
+        Capability(id="cap_2", name="Kubernetes", strength="moderate"))
+    SqliteCareerEdgeRepository(conn).add(CareerEdge(
+        id="edge_t2", source_type="role_family", source_id="rf_1",
+        edge_type="TARGETS", target_type="capability", target_id="cap_2",
+        claim_kind="fact", provenance="t", created_by="user", user_verified=1))
+    said = []
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, said.append)
+    assert result.status == VERIFIED
+    assert any("gap: targeted capability 'Kubernetes'" in s for s in said)
+
+
+def test_show_prints_the_real_artifact_path(env, tmp_path, monkeypatch):
+    conn, storage = env
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(tmp_path / "instance"))
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    said = []
+    package_cmd.run_show(conn, result.version_id, False, said.append)
+    artifact_lines = [s for s in said if s.strip().startswith("artifact:")]
+    assert artifact_lines
+    printed = pathlib.Path(artifact_lines[0].split("artifact:", 1)[1].strip())
+    assert str(printed).startswith(str(tmp_path / "instance"))
+    assert printed.exists()  # the printed locator is the real on-disk file
 
 
 def test_generate_fails_cleanly_when_family_has_no_targets(env):

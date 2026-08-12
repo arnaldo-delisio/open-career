@@ -15,7 +15,9 @@ import hashlib
 import json
 import threading
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
+from typing import Callable
 
 from domain.ats_check import DEFAULT_PAGE_BUDGET, check_ats
 from domain.context import GenerationContext
@@ -39,30 +41,41 @@ class PipelineResult:
 class _Heartbeat:
     """Concurrent heartbeat thread running for the whole generation. Renewal
     is one fenced conditional update at the repository; a zero-row renewal
-    permanently stops this worker (an expired lease is never resurrected)."""
+    permanently stops this worker (an expired lease is never resurrected).
 
-    def __init__(self, repo: PackageRepository, version_id: str, owner: str, generation: int):
-        self._repo = repo
+    The repository is obtained inside the thread from repo_factory (a callable
+    returning a context manager yielding a PackageRepository), so a
+    sqlite-backed heartbeat gets its own connection for the thread's lifetime:
+    sqlite connections are single-thread by default, and sharing the worker's
+    connection here raises ProgrammingError on every renewal. An exception
+    during renewal is an infrastructure failure, recorded in `error` and kept
+    distinct from a genuine zero-row lost lease."""
+
+    def __init__(self, repo_factory: Callable[[], AbstractContextManager[PackageRepository]],
+                 version_id: str, owner: str, generation: int):
+        self._repo_factory = repo_factory
         self._version_id = version_id
         self._owner = owner
         self._generation = generation
         self._stop = threading.Event()
         self.lost = threading.Event()
+        self.error: Exception | None = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self) -> None:
         self._thread.start()
 
     def _run(self) -> None:
-        while not self._stop.wait(HEARTBEAT_INTERVAL_SECONDS):
-            try:
-                renewed = self._repo.renew_lease(
-                    self._version_id, self._owner, self._generation, LEASE_SECONDS)
-            except Exception:
-                renewed = False
-            if not renewed:
-                self.lost.set()
-                return
+        try:
+            with self._repo_factory() as repo:
+                while not self._stop.wait(HEARTBEAT_INTERVAL_SECONDS):
+                    if not repo.renew_lease(self._version_id, self._owner,
+                                            self._generation, LEASE_SECONDS):
+                        self.lost.set()
+                        return
+        except Exception as e:
+            self.error = e
+            self.lost.set()
 
     def stop_and_join(self) -> None:
         self._stop.set()
@@ -72,12 +85,19 @@ class _Heartbeat:
 class GenerationPipeline:
     def __init__(self, repo: PackageRepository, storage: StorageAdapter,
                  renderer: CvRenderer, extractor: PdfTextExtractor,
-                 drafter: CvDraftingService | None):
+                 drafter: CvDraftingService | None,
+                 heartbeat_repo_factory: Callable[
+                     [], AbstractContextManager[PackageRepository]] | None = None):
         self._repo = repo
         self._storage = storage
         self._renderer = renderer
         self._extractor = extractor
         self._drafter = drafter
+        # Default (thread-safe repos, e.g. test fakes): the heartbeat shares
+        # the worker's repository. Sqlite callers pass a factory opening a
+        # dedicated connection inside the heartbeat thread.
+        self._heartbeat_repo_factory = (heartbeat_repo_factory
+                                        or (lambda: nullcontext(repo)))
 
     def generate(self, package_id: str, context: GenerationContext,
                  page_budget: int = DEFAULT_PAGE_BUDGET,
@@ -87,7 +107,8 @@ class GenerationPipeline:
         never the verifier, the render, or the ATS check."""
         owner = f"worker-{int(time.time() * 1000)}-{threading.get_ident()}"
         version = self._repo.reserve_version(package_id, owner, LEASE_SECONDS)
-        heartbeat = _Heartbeat(self._repo, version.id, owner, version.lease_generation)
+        heartbeat = _Heartbeat(self._heartbeat_repo_factory, version.id, owner,
+                               version.lease_generation)
         heartbeat.start()
         stage_ref = ["reserve"]
         try:
@@ -95,9 +116,7 @@ class GenerationPipeline:
                              heartbeat, stage_ref)
         except LeaseLostError:
             heartbeat.stop_and_join()
-            return PipelineResult(version.id, FAILED,
-                                  "lease lost; worker stopped without writing"
-                                  " (recovery owns this version now)")
+            return self._report_lease_loss(version, owner, heartbeat, stage_ref[0])
         except Exception as e:  # any stage error becomes a structured failure
             heartbeat.stop_and_join()
             stage = stage_ref[0]
@@ -109,6 +128,34 @@ class GenerationPipeline:
             return PipelineResult(version.id, FAILED, f"failed at {stage}: {e}")
         finally:
             heartbeat.stop_and_join()
+
+    def _report_lease_loss(self, version: PackageVersion, owner: str,
+                           heartbeat: _Heartbeat, stage: str) -> PipelineResult:
+        """A heartbeat infrastructure error (renewal raised) is not a lost
+        lease: the lease may still be live, so try to mark the row FAILED
+        under it, and never claim recovery owns a row it would refuse. Only a
+        genuine zero-row renewal or check means the lease is truly gone."""
+        if heartbeat.error is not None:
+            detail = f"{type(heartbeat.error).__name__}: {heartbeat.error}"
+            report = json.dumps({
+                "stage": stage,
+                "error": "heartbeat renewal failed with an infrastructure error;"
+                         " worker stopped without writing",
+                "detail": detail})
+            try:
+                self._repo.fail(version.id, owner, version.lease_generation, report)
+                outcome = "version marked FAILED"
+            except Exception:
+                outcome = ("recovery claims this version once its lease expires;"
+                           " run `open-career package recover`")
+            return PipelineResult(
+                version.id, FAILED,
+                f"heartbeat renewal hit an infrastructure error ({detail});"
+                f" worker stopped without writing; {outcome}")
+        return PipelineResult(
+            version.id, FAILED,
+            "lease lost (expired or claimed by another owner); worker stopped"
+            " without writing; run `open-career package recover` to claim it")
 
     def _run(self, version: PackageVersion, owner: str, context: GenerationContext,
              page_budget: int, edited_model: CvModel | None,
