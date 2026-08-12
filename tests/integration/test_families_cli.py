@@ -107,3 +107,55 @@ def test_list_add_edit_pause_roundtrip(conn):
         "Forward Deployed Engineer", "Platform Engineer"}
     statuses = {f["name"]: f["status"] for f in payload["families"]}
     assert statuses["Forward Deployed Engineer"] == "paused"
+
+
+def test_add_collects_all_input_before_persisting_targets_included(conn):
+    run_families_init(conn, FakeModel(), _script(["c", "r", "4", "obj", "y"]),
+                      lambda _s: None)
+    run_families_add(conn, _script(["Platform Engineer", "infra", "", "2",
+                                    "Python", "Nope Capability", ""]),
+                     lambda _s: None)
+    family = [f for f in SqliteRoleFamilyRepository(conn).list_all()
+              if f.name == "Platform Engineer"][0]
+    targets = SqliteCareerEdgeRepository(conn).active_edges_from(
+        "role_family", family.id, "TARGETS")
+    assert [e.target_id for e in targets] == ["cap_1"]  # unknown name skipped
+    assert targets[0].created_by == "user" and targets[0].user_verified == 1
+
+
+def test_add_interrupted_mid_dialog_persists_nothing(conn):
+    """Drive regression: EOF mid-dialog used to crash with a raw traceback
+    AFTER the family row landed, so the retry hit a raw UNIQUE error. Nothing
+    may persist until every input is collected."""
+    run_families_init(conn, FakeModel(), _script(["c", "r", "4", "obj", "y"]),
+                      lambda _s: None)
+    versions_before = conn.execute("SELECT COUNT(*) FROM strategy_versions").fetchone()[0]
+
+    def eof_after_name(_prompt):
+        if not eof_after_name.asked:
+            eof_after_name.asked = True
+            return "Engineering Manager"
+        raise EOFError("EOF when reading a line")
+    eof_after_name.asked = False
+
+    said = []
+    run_families_add(conn, eof_after_name, said.append)  # must not raise
+    assert any("nothing persisted" in s for s in said)
+    names = {f.name for f in SqliteRoleFamilyRepository(conn).list_all()}
+    assert "Engineering Manager" not in names
+    assert conn.execute("SELECT COUNT(*) FROM strategy_versions").fetchone()[0] \
+        == versions_before
+    # The retry now succeeds instead of hitting a UNIQUE constraint.
+    run_families_add(conn, _script(["Engineering Manager", "people", "", "3", ""]),
+                     lambda _s: None)
+    assert "Engineering Manager" in {
+        f.name for f in SqliteRoleFamilyRepository(conn).list_all()}
+
+
+def test_add_duplicate_name_reports_cleanly(conn):
+    run_families_init(conn, FakeModel(), _script(["c", "r", "4", "obj", "y"]),
+                      lambda _s: None)
+    said = []
+    run_families_add(conn, _script(["forward deployed engineer"]), said.append)
+    assert any("already exists" in s for s in said)
+    assert len(SqliteRoleFamilyRepository(conn).list_all()) == 1

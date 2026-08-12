@@ -181,22 +181,47 @@ def resolve_family(conn: sqlite3.Connection, ref: str) -> RoleFamily | None:
 
 
 def run_families_add(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
-    name = ask("Family name: ").strip()
-    if not name:
-        say("aborted (empty name)")
+    """Every input is collected before anything persists: interrupted or ended
+    input aborts with nothing written (the persist phase asks nothing), so a
+    retry never collides with a half-committed family."""
+    capabilities = SqliteCapabilityRepository(conn)
+    try:
+        name = ask("Family name: ").strip()
+        if not name:
+            say("aborted (empty name); nothing persisted")
+            return
+        if any(f.name.lower() == name.lower()
+               for f in SqliteRoleFamilyRepository(conn).list_all()):
+            say(f"a family named '{name}' already exists; nothing persisted")
+            return
+        rationale = ask("Rationale: ").strip() or name
+        seniority = ask("Target seniority (blank to skip): ").strip() or None
+        allocation = _ask_int(ask, say, "Emphasis", 1, 5, 3)
+        targets = []
+        while True:
+            capability_name = ask("Target capability name (blank to finish): ").strip()
+            if not capability_name:
+                break
+            capability = capabilities.get_by_name(capability_name)
+            if capability is None:
+                say(f"  (skipping unknown capability '{capability_name}')")
+                continue
+            targets.append(capability)
+    except (EOFError, KeyboardInterrupt):
+        say("aborted (input ended); nothing persisted")
         return
-    rationale = ask("Rationale: ").strip() or name
-    seniority = ask("Target seniority (blank to skip): ").strip() or None
-    allocation = _ask_int(ask, say, "Emphasis", 1, 5, 3)
     family = RoleFamily(id=new_id("rf"), name=name, rationale=rationale,
                         target_seniority=seniority)
     version = FamilyStrategyService(conn).add_family(family, allocation)
-    say(f"Added '{name}' ({family.id}); minted strategy version {version}.")
-    while True:
-        capability_name = ask("Target capability name (blank to finish): ").strip()
-        if not capability_name:
-            break
-        _confirm_targets(conn, family.id, (capability_name,), ask, say)
+    edges = SqliteCareerEdgeRepository(conn)
+    for capability in targets:
+        edges.add(CareerEdge(
+            id=new_id("edge"), source_type="role_family", source_id=family.id,
+            edge_type="TARGETS", target_type="capability", target_id=capability.id,
+            claim_kind="fact", provenance="families:user-confirmation",
+            created_by="user", user_verified=1))
+    say(f"Added '{name}' ({family.id}); minted strategy version {version};"
+        f" {len(targets)} targeted capabilities.")
 
 
 def run_families_edit(conn: sqlite3.Connection, ref: str, ask: Ask, say: Say) -> None:
