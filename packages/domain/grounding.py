@@ -42,6 +42,14 @@ OWNERSHIP_VERB_CLASSES: dict[str, frozenset[str]] = {
     "launch": frozenset({"launch", "ship", "deliver", "release"}),
 }
 
+# Rule 5 (section-kind): which canonical experience kinds may render in which
+# content-model section (per the content model's kind -> section mapping).
+_KINDS_FOR_SECTION: dict[str, frozenset[str]] = {
+    "experiences": frozenset({"role", "venture", "other"}),
+    "projects": frozenset({"project"}),
+    "education": frozenset({"education"}),
+}
+
 
 @dataclass(frozen=True)
 class Finding:
@@ -100,6 +108,7 @@ class GroundingVerifier:
                                  ("projects", cv.projects), ("education", cv.education)):
             for entry in entries:
                 findings.extend(self._check_entry(section, entry))
+        findings.extend(self._check_experience_order(cv))
         return GroundingReport(spec_version=SPEC_VERSION, findings=tuple(findings))
 
     # -- rules -------------------------------------------------------------
@@ -116,7 +125,8 @@ class GroundingVerifier:
 
     def _check_header(self, cv: CvModel) -> list[Finding]:
         """Header fields must equal profile fields exactly (from user_profile,
-        nothing model-decided)."""
+        nothing model-decided): every populated canonical field must appear,
+        so omission fails like alteration."""
         findings = []
         profile = self._view["profile"]
         checks = (("name", cv.header.name, profile.get("full_name")),
@@ -124,16 +134,21 @@ class GroundingVerifier:
                   ("phone", cv.header.phone, profile.get("phone")),
                   ("location", cv.header.location, profile.get("location")))
         for field, rendered, canonical in checks:
-            if rendered is not None and _neq(rendered, canonical):
+            if (canonical or rendered is not None) and _neq(rendered, canonical):
                 findings.append(Finding(
                     "header", f"header.{field}",
                     f"'{rendered}' does not match the profile value '{canonical}'"))
-        link_values = {normalize_chars(str(profile.get(f) or ""))
-                       for f in ("linkedin_url", "github_url", "portfolio_url", "website_url")}
+        link_values = {normalize_chars(str(profile[f]))
+                       for f in ("linkedin_url", "github_url", "portfolio_url", "website_url")
+                       if profile.get(f)}
+        rendered_links = {normalize_chars(link) for link in cv.header.links}
         for link in cv.header.links:
             if normalize_chars(link) not in link_values:
                 findings.append(Finding("header", "header.links",
                                         f"link '{link}' is not a profile link"))
+        for missing in sorted(link_values - rendered_links):
+            findings.append(Finding("header", "header.links",
+                                    f"profile link '{missing}' is missing from the header"))
         return findings
 
     def _check_summary(self, cv: CvModel) -> list[Finding]:
@@ -197,9 +212,18 @@ class GroundingVerifier:
         if entry.location is not None:
             findings.append(Finding("skeleton", f"{element}.location",
                                     "experience rows carry no location column"))
-        # Experience gate: renders only with at least one reachable approved
-        # fact attached to it that renders.
-        if not entry.bullets:
+        # Section-kind: a canonical row renders only in the section its kind
+        # belongs to (an education row never poses as employment).
+        if experience["kind"] not in _KINDS_FOR_SECTION[section]:
+            findings.append(Finding(
+                "section-kind", element,
+                f"a '{experience['kind']}' row does not belong in the"
+                f" {section} section"))
+        # Experience gate (experience section only, per the amended content
+        # model): an employment entry renders only with at least one reachable
+        # approved fact rendered under it; education and project rows may
+        # render skeleton-only from their confirmed canonical row.
+        if section == "experiences" and not entry.bullets:
             findings.append(Finding(
                 "experience-gate", element,
                 "an experience renders only with at least one approved, reachable"
@@ -257,11 +281,23 @@ class GroundingVerifier:
         findings.extend(self._check_scope(element, bullet.text, source_text))
         return findings
 
+    def _check_experience_order(self, cv: CvModel) -> list[Finding]:
+        """Entries in the experience section must be reverse-chronological by
+        their canonical dates (rows already flagged by traceability skip)."""
+        keys = [_chron_key(row) for entry in cv.experiences
+                for row in [self._view["experiences"].get(entry.experience_id)]
+                if row is not None]
+        if keys != sorted(keys, reverse=True):
+            return [Finding("ordering", "experiences",
+                            "experience entries must be in reverse-chronological"
+                            " order by canonical dates")]
+        return []
+
     def _check_numbers(self, element: str, text: str,
-                       allowed: set[tuple[str, str, str]]) -> list[Finding]:
+                       allowed: set[tuple[str, str, str, str]]) -> list[Finding]:
         missing = numeric_tokens(text) - allowed
         if missing:
-            rendered = ", ".join(f"{c}{v}{u}" for c, v, u in sorted(missing))
+            rendered = ", ".join(f"{s}{c}{v}{u}" for s, c, v, u in sorted(missing))
             return [Finding("numbers-dates", element,
                             f"numbers or dates absent from the element's sources: {rendered}")]
         return []
@@ -297,3 +333,9 @@ class GroundingVerifier:
 
 def _neq(rendered: str | None, canonical: str | None) -> bool:
     return normalize_chars(str(rendered or "")) != normalize_chars(str(canonical or ""))
+
+
+def _chron_key(row: dict) -> tuple[str, str]:
+    """Sort key for reverse-chronological ordering: open-ended (current) rows
+    first, then by end date, then start date (canonical YYYY-MM strings)."""
+    return (row["end_date"] or "9999-99", row["start_date"] or "")

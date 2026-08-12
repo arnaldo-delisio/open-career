@@ -193,7 +193,7 @@ def run_families_add(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
         if any(f.name.lower() == name.lower()
                for f in SqliteRoleFamilyRepository(conn).list_all()):
             say(f"a family named '{name}' already exists; nothing persisted")
-            return
+            raise SystemExit(1)
         rationale = ask("Rationale: ").strip() or name
         seniority = ask("Target seniority (blank to skip): ").strip() or None
         allocation = _ask_int(ask, say, "Emphasis", 1, 5, 3)
@@ -209,7 +209,7 @@ def run_families_add(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
             targets.append(capability)
     except (EOFError, KeyboardInterrupt):
         say("aborted (input ended); nothing persisted")
-        return
+        raise SystemExit(1) from None
     family = RoleFamily(id=new_id("rf"), name=name, rationale=rationale,
                         target_seniority=seniority)
     version = FamilyStrategyService(conn).add_family(family, allocation)

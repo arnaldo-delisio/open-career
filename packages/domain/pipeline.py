@@ -172,13 +172,17 @@ class GenerationPipeline:
 
         stage_ref[0] = "context-snapshot"
         # Stage 1: persist the exact canonical context snapshot (locator
-        # recorded deterministically before object creation).
+        # recorded deterministically before object creation). The recorded
+        # hash covers the stored bytes read back, not the in-memory JSON, so
+        # the audit trail attests what storage actually holds.
         snapshot_locator = locator("context.json")
         guard()
         self._storage.write_text_new(snapshot_locator, context.snapshot_json())
+        snapshot_hash = hashlib.sha256(
+            self._storage.read_bytes(snapshot_locator)).hexdigest()
         repo.record_progress(version.id, owner, generation,
                              context_snapshot_locator=snapshot_locator,
-                             input_context_hash=context.snapshot_hash())
+                             input_context_hash=snapshot_hash)
 
         stage_ref[0] = "draft"
         # Stage 2: draft and verify (model work runs outside any write txn).
@@ -207,19 +211,22 @@ class GenerationPipeline:
             return PipelineResult(version.id, FAILED, "grounding verification failed")
 
         stage_ref[0] = "render"
-        # Stage 3: render, store the artifact write-once, hash the stored
-        # bytes read back at finalization.
+        # Stage 3: render, store the artifact write-once, then read the stored
+        # bytes back once: the recorded hash and the ATS check both run on
+        # those exact bytes, never the pre-storage buffer.
         pdf = self._renderer.render_pdf(draft.cv)
         artifact_locator = locator("cv.pdf")
         guard()
         self._storage.write_bytes_new(artifact_locator, pdf)
-        artifact_hash = hashlib.sha256(self._storage.read_bytes(artifact_locator)).hexdigest()
+        stored_pdf = self._storage.read_bytes(artifact_locator)
+        artifact_hash = hashlib.sha256(stored_pdf).hexdigest()
         repo.record_progress(version.id, owner, generation,
                              artifact_locator=artifact_locator, artifact_hash=artifact_hash)
 
         stage_ref[0] = "ats-check"
-        # Stage 4: the mandatory separate pdftotext step.
-        ats_report = check_ats(self._extractor.extract_layout(pdf), draft.cv, page_budget)
+        # Stage 4: the mandatory separate pdftotext step, on the stored bytes.
+        ats_report = check_ats(self._extractor.extract_layout(stored_pdf), draft.cv,
+                               page_budget)
         repo.record_progress(version.id, owner, generation,
                              ats_report_json=ats_report.to_json())
         if not ats_report.passed:
@@ -239,7 +246,7 @@ class GenerationPipeline:
             version.id, owner, generation,
             content_model_json=draft.cv.to_json(),
             context_snapshot_locator=snapshot_locator,
-            input_context_hash=context.snapshot_hash(),
+            input_context_hash=snapshot_hash,
             verifier_report_json=draft.trail_json(),
             ats_report_json=ats_report.to_json(),
             artifact_locator=artifact_locator,

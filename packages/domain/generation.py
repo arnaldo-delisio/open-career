@@ -9,7 +9,7 @@ then the element falls back to the fact statement verbatim or is dropped
 with the gap reported. The verifier never rewrites silently."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from domain.context import GenerationContext
 from domain.cv_model import (
@@ -75,14 +75,20 @@ def build_verbatim_model(context: GenerationContext, generated_at: str) -> tuple
         "experiences": [], "projects": [], "education": []}
     for experience in context.experiences:
         fact_ids = facts_by_experience.get(experience.id)
-        if not fact_ids:
-            continue  # the experience gate: no reachable approved fact, no entry
+        section = _SECTION_FOR_KIND[experience.kind]
+        if not fact_ids and section == "experiences":
+            # The container gate applies to employment entries only; a
+            # confirmed education or project row renders skeleton-only.
+            continue
         bullets = tuple(Bullet(text=view["facts"][fid]["statement"], fact_ids=(fid,))
-                        for fid in fact_ids)
-        sections[_SECTION_FOR_KIND[experience.kind]].append(CvExperienceEntry(
+                        for fid in (fact_ids or ()))
+        sections[section].append(CvExperienceEntry(
             experience_id=experience.id, title=experience.title, org=experience.org,
             start_date=experience.start_date, end_date=experience.end_date,
             bullets=bullets))
+    # Reverse-chronological employment order, as the verifier enforces it.
+    sections["experiences"].sort(
+        key=lambda e: (e.end_date or "9999-99", e.start_date or ""), reverse=True)
     skills = tuple(SkillItem(name=c.name, capability_ids=(c.id,))
                    for c in context.covered_capabilities())
     cv = CvModel(
@@ -114,7 +120,10 @@ class CvDraftingService:
             attempts += 1
             raw = self._model.complete(prompt + failure)
             try:
-                cv = parse_cv_model(raw)
+                # The header is built in code from user_profile, whatever the
+                # model returned: contact fields can be neither omitted nor
+                # altered by model output.
+                cv = replace(parse_cv_model(raw), header=build_header(context))
             except CvModelError as e:
                 failure = ("\n\nYour previous output failed schema validation: "
                            f"{e}\nReturn only corrected JSON matching the schema exactly.")

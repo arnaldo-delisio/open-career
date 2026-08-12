@@ -8,9 +8,11 @@ from domain.generation import (
     CvDraftingService,
     build_verbatim_model,
 )
+from dataclasses import replace
+
 from domain.grounding import GroundingVerifier
 from domain.ports import ModelAdapter
-from tests.unit.test_grounding import make_context, make_cv
+from tests.unit.test_grounding import EDU, EXP, EXP2, make_context, make_cv
 
 
 class FakeModel(ModelAdapter):
@@ -64,6 +66,37 @@ def test_schema_invalid_output_retries():
         context, "2026-08-11T00:00:00Z")
     assert result.report.passed and result.attempts == 2
     assert "schema validation" in model.prompts[1]
+
+
+def test_model_output_cannot_omit_or_alter_the_header():
+    """The drafted header is rebuilt in code from user_profile: omitted or
+    altered contact fields never survive parsing."""
+    context = make_context()
+    tampered = replace(make_cv(),
+                       header=replace(make_cv().header, email=None,
+                                      phone="+1 555 0000", links=()))
+    model = FakeModel([tampered.to_json()])
+    result = CvDraftingService(model, "PROMPT {context_json}").draft(
+        context, "2026-08-11T00:00:00Z")
+    assert result.report.passed and result.attempts == 1
+    header = result.cv.header
+    assert header.email == "t@example.com"
+    assert header.phone == "+39 333 1234567"
+    assert header.links == ("https://github.com/example",)
+
+
+def test_verbatim_model_renders_factless_education_skeleton_only():
+    """A confirmed factless education row renders skeleton-only; a factless
+    employment row still never renders (container gate)."""
+    ghost = replace(EXP2, id="exp_ghost", title="Ghost Role", org="GhostCo")
+    context = make_context(experiences=(EXP, EXP2, EDU, ghost))
+    cv, _dropped = build_verbatim_model(context, "2026-08-11T00:00:00Z")
+    assert [e.experience_id for e in cv.education] == ["exp_edu"]
+    assert cv.education[0].bullets == ()
+    assert cv.education[0].title == "B.Sc. Computer Science"
+    assert "exp_ghost" not in {e.experience_id for e in cv.experiences}
+    report = GroundingVerifier(context).verify(cv)
+    assert report.passed, report.to_json()
 
 
 def test_prompt_contains_context_snapshot():

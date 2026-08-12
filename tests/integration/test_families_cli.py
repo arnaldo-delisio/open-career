@@ -139,7 +139,9 @@ def test_add_interrupted_mid_dialog_persists_nothing(conn):
     eof_after_name.asked = False
 
     said = []
-    run_families_add(conn, eof_after_name, said.append)  # must not raise
+    with pytest.raises(SystemExit) as excinfo:  # scripts see the abort as nonzero
+        run_families_add(conn, eof_after_name, said.append)
+    assert excinfo.value.code == 1
     assert any("nothing persisted" in s for s in said)
     names = {f.name for f in SqliteRoleFamilyRepository(conn).list_all()}
     assert "Engineering Manager" not in names
@@ -156,6 +158,8 @@ def test_add_duplicate_name_reports_cleanly(conn):
     run_families_init(conn, FakeModel(), _script(["c", "r", "4", "obj", "y"]),
                       lambda _s: None)
     said = []
-    run_families_add(conn, _script(["forward deployed engineer"]), said.append)
+    with pytest.raises(SystemExit) as excinfo:  # refusal is a nonzero exit
+        run_families_add(conn, _script(["forward deployed engineer"]), said.append)
+    assert excinfo.value.code == 1
     assert any("already exists" in s for s in said)
     assert len(SqliteRoleFamilyRepository(conn).list_all()) == 1

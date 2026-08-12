@@ -343,3 +343,70 @@ def test_generate_fails_cleanly_when_family_has_no_targets(env):
                      " WHERE id = 'edge_t'")
     with pytest.raises(package_cmd.PackageCliError, match="targets no capabilities"):
         package_cmd.run_generate(conn, storage, None, "FDE", 1, lambda _s: None)
+
+
+# --- round-1 review folds (2026-08-12) --------------------------------------
+
+
+def test_unreachable_experience_is_not_a_grounding_source(env):
+    """An experience the family's walk never reaches supplies no grounding
+    text: its words fail in a summary and in a bullet alike."""
+    from dataclasses import replace
+
+    from domain.cv_model import Bullet
+
+    conn, storage = env
+    SqliteExperienceRepository(conn).add(Experience(
+        id="exp_ghost", kind="role", title="Zebrafish Wrangler", org="GhostCo",
+        start_date="2010-01", end_date="2011-01"))
+    context = package_cmd.build_context(conn, "FDE")
+    assert {e.id for e in context.experiences} == {"exp_1"}
+    verifier = GroundingVerifier(context)
+    cv, _dropped = build_verbatim_model(context, "2026-08-12T00:00:00Z")
+    summary_report = verifier.verify(replace(cv, summary="Zebrafish specialist"))
+    assert not summary_report.passed
+    entry = cv.experiences[0]
+    tampered = replace(entry, bullets=(Bullet(
+        text=entry.bullets[0].text + " for Zebrafish",
+        fact_ids=entry.bullets[0].fact_ids),))
+    bullet_report = verifier.verify(replace(cv, experiences=(tampered,)))
+    assert not bullet_report.passed
+
+
+class _MutatingStorage:
+    """Storage that corrupts artifact bytes on write: finalization must run
+    its checks on the stored bytes and never reach VERIFIED."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def write_bytes_new(self, relative_path, content):
+        self._inner.write_bytes_new(relative_path, content[::-1])
+
+
+def test_storage_that_mutates_bytes_cannot_finalize_verified(env):
+    conn, storage = env
+    result = package_cmd.run_generate(
+        conn, _MutatingStorage(storage), FakeModel([_model_json(conn)]), "FDE", 1,
+        lambda _s: None)
+    assert result.status == FAILED
+    version = SqlitePackageRepository(conn).get_version(result.version_id)
+    assert version.status == FAILED
+
+
+def test_confirmed_factless_education_renders_skeleton_only(env):
+    conn, storage = env
+    SqliteExperienceRepository(conn).add(Experience(
+        id="exp_edu", kind="education", title="B.Sc. Computer Science",
+        org="State University", start_date="2014-09", end_date="2017-07"))
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    assert result.status == VERIFIED
+    content = json.loads(
+        SqlitePackageRepository(conn).get_version(result.version_id).content_model_json)
+    assert [e["experience_id"] for e in content["education"]] == ["exp_edu"]
+    assert content["education"][0]["bullets"] == []
+    assert {e["experience_id"] for e in content["experiences"]} == {"exp_1"}

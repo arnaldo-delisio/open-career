@@ -15,7 +15,7 @@ and acronyms."""
 import re
 import unicodedata
 
-SPEC_VERSION = "1"
+SPEC_VERSION = "2"
 
 # Pre-render and pre-compare character normalization (the mojibake-in-sent-
 # letters incident class): em/en dashes, smart quotes, zero-width, NBSP.
@@ -171,27 +171,34 @@ def _is_pure_numeric(token: str) -> bool:
 _NUMBER_WORD_RE = re.compile(r"\b(" + "|".join(_NUMBER_WORDS) + r")\b")
 
 _NUMERIC_SPAN = re.compile(
+    r"(?P<sign>(?<![\w.,])[-+]\s?)?"  # leading sign; a dash between digits is a range
     r"(?P<currency>[$€£])?"
     r"(?P<value>\d+(?:[.,]\d+)*)"
     r"(?P<unit>\s?%|[a-zA-Z]{1,4}(?![\w]))?")  # % may be spaced; letter units attached
 
+# Word-form signs, canonicalized before matching ("minus 10%" == "-10%").
+_SIGN_WORDS = re.compile(r"\b(minus|negative)\s+(?=[$€£\d])")
 
-def numeric_tokens(text: str) -> set[tuple[str, str, str]]:
-    """(currency, value, unit) triples for every numeric occurrence, after
-    word-number and month canonicalization. Units are case-folded; values keep
+
+def numeric_tokens(text: str) -> set[tuple[str, str, str, str]]:
+    """(sign, currency, value, unit) tuples for every numeric occurrence,
+    after word-number, sign-word, and month canonicalization. Signs are part
+    of the token: -10% never grounds 10%. Units are case-folded; values keep
     their digits with thousands separators stripped."""
     result = set()
     for token in tokenize(text):
         month = _MONTHS.get(token)
         if month:
-            result.add(("", month, "month"))
+            result.add(("", "", month, "month"))
     # Word numbers become digits on the normalized text itself, so a detached
     # unit ("forty %") stays adjacent to its value.
     canonical = _NUMBER_WORD_RE.sub(lambda m: _NUMBER_WORDS[m.group(0)], normalize(text))
+    canonical = _SIGN_WORDS.sub("-", canonical)
     for m in _NUMERIC_SPAN.finditer(canonical):
         value = m.group("value").replace(",", "")
         unit = (m.group("unit") or "").strip().casefold()
-        result.add((m.group("currency") or "", value, unit))
+        result.add(((m.group("sign") or "").strip(), m.group("currency") or "",
+                    value, unit))
     return result
 
 

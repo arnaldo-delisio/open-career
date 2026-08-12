@@ -54,8 +54,11 @@ class PackageCliError(RuntimeError):
 
 
 def build_context(conn: sqlite3.Connection, family_ref: str) -> GenerationContext:
-    """The input gate: selection report, profile, experience rows, plus the
-    immutable strategy snapshot. Nothing else enters the prompt."""
+    """The input gate: selection report, profile, the experience rows the
+    walk actually reaches (plus confirmed education/project rows, which
+    render skeleton-only), and the immutable strategy snapshot. Nothing else
+    enters the prompt or the grounding corpus: an unreachable employment
+    row's words are not grounding sources."""
     family = resolve_family(conn, family_ref)
     if family is None:
         raise PackageCliError(f"unknown role family '{family_ref}'")
@@ -74,11 +77,16 @@ def build_context(conn: sqlite3.Connection, family_ref: str) -> GenerationContex
         SqliteExperienceRepository(conn))
     selection = FamilyEvidenceSelection(
         edges, SqliteCapabilityRepository(conn), traversal).select(family.id)
+    reachable = {fc.fact.experience_id
+                 for s in selection.selections for chain in s.chains
+                 for fc in chain.facts if fc.fact.experience_id}
     return GenerationContext(
         role_family_id=family.id,
         selection=selection,
         profile=SqliteUserProfileRepository(conn).get_fields(),
-        experiences=tuple(SqliteExperienceRepository(conn).list_all()),
+        experiences=tuple(
+            e for e in SqliteExperienceRepository(conn).list_all()
+            if e.id in reachable or e.kind in ("project", "education")),
         strategy=StrategySnapshot(family=family, strategy_version=strategy_version,
                                   objective=objective,
                                   allocation=allocations[family.id]))

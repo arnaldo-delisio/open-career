@@ -232,3 +232,74 @@ def test_header_must_match_profile():
 def test_urls_and_versions_do_not_split():
     assert "https://github.com/example" in tokenize("see https://github.com/example now")
     assert "3.12" in tokenize("Python 3.12")
+
+
+def test_header_omission_fails_per_field():
+    """A model that omits a populated contact field fails like one that
+    alters it."""
+    full = dict(name="Test Person", email="t@example.com", phone="+39 333 1234567",
+                location="Milan, Italy", links=("https://github.com/example",))
+    for field in ("email", "phone", "location", "links"):
+        header = CvHeader(**{**full, field: None if field != "links" else ()})
+        report = verify(make_cv(header=header))
+        assert "header" in rules(report), field
+
+
+def test_signed_numbers_never_ground_unsigned():
+    """-10% and 10% are different claims, for percentages, currency, and
+    plain numbers; word-form signs canonicalize the same way."""
+    assert numeric_tokens("-10%").isdisjoint(numeric_tokens("10%"))
+    assert numeric_tokens("-$2M").isdisjoint(numeric_tokens("$2M"))
+    assert numeric_tokens("shrank by -5 points").isdisjoint(numeric_tokens("5 points"))
+    assert numeric_tokens("minus 10%") == numeric_tokens("-10%")
+    fact = CareerFact(id="fact_n", fact_type="achievement",
+                      statement="Margin moved -10% during the pipeline migration",
+                      source="interview", user_approved=1, experience_id="exp_1")
+    context = make_context(facts=(fact,))
+    report = verify(make_cv(bullets=(Bullet(
+        text="Margin moved 10% during the pipeline migration",
+        fact_ids=("fact_n",)),)), context)
+    assert "numbers-dates" in rules(report)
+
+
+EDU = Experience(id="exp_edu", kind="education", title="B.Sc. Computer Science",
+                 org="State University", start_date="2014-09", end_date="2017-07")
+
+
+def _entry(exp, bullets=()):
+    return CvExperienceEntry(experience_id=exp.id, title=exp.title, org=exp.org,
+                             start_date=exp.start_date, end_date=exp.end_date,
+                             bullets=tuple(bullets))
+
+
+def _cv_with(experiences, education=()):
+    base = make_cv()
+    return CvModel(header=base.header, summary="", skills=base.skills,
+                   experiences=tuple(experiences), education=tuple(education),
+                   meta=base.meta)
+
+
+def test_education_row_under_experience_section_fails():
+    context = make_context(experiences=(EXP, EXP2, EDU))
+    cv = _cv_with(experiences=(make_cv().experiences[0], _entry(EDU)))
+    report = verify(cv, context)
+    assert "section-kind" in rules(report)
+
+
+def test_skeleton_only_education_entry_is_legal():
+    """A confirmed factless education row renders skeleton-only: no
+    experience-gate, no section-kind finding."""
+    context = make_context(experiences=(EXP, EXP2, EDU))
+    cv = _cv_with(experiences=make_cv().experiences, education=(_entry(EDU),))
+    report = verify(cv, context)
+    assert report.passed, report.to_json()
+
+
+def test_out_of_order_experiences_fail():
+    context = make_context()
+    older = _entry(EXP2, bullets=(Bullet(
+        text="Contributed to the internal analytics dashboard", fact_ids=("fact_2",)),))
+    newer = make_cv().experiences[0]
+    assert verify(_cv_with(experiences=(newer, older)), context).passed
+    report = verify(_cv_with(experiences=(older, newer)), context)
+    assert "ordering" in rules(report)
