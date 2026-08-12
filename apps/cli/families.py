@@ -12,6 +12,7 @@ import sqlite3
 from typing import Callable
 
 from adapters.storage.family_strategy import FamilyStrategyService, StrategyError
+from apps.cli.interview import ask_yes_no
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_entities import (
     SqliteCapabilityRepository,
@@ -67,8 +68,7 @@ def _confirm_targets(conn: sqlite3.Connection, family_id: str,
         if capability is None:
             say(f"  (skipping unknown capability '{name}')")
             continue
-        answer = ask(f"  Target capability '{name}'? (y/n) [y]: ").strip().lower()
-        if answer in ("", "y", "yes"):
+        if ask_yes_no(ask, say, f"  Target capability '{name}'?", default=True):
             edges.add(CareerEdge(
                 id=new_id("edge"), source_type="role_family", source_id=family_id,
                 edge_type="TARGETS", target_type="capability", target_id=capability.id,

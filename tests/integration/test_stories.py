@@ -102,6 +102,58 @@ def test_story_bank_mints_file_evidence_and_edges(tmp_path):
         conn.close()
 
 
+def test_story_bank_excludes_education_rows(tmp_path):
+    """Behavioral stories come from work: education experiences are neither
+    offered nor counted in the denominator (drive finding)."""
+    conn, storage = _instance(tmp_path)
+    _seed_experience(conn, title="Role A")
+    edu = Experience(id=new_id("exp"), kind="education", title="BSc", org="Uni")
+    SqliteExperienceRepository(conn).add(edu)
+    says = []
+    answers = ["1", "S", "A", "O", "", "n"]  # exactly one story offered
+    try:
+        run_stories(conn, storage, ask=_scripted(answers), say=says.append)
+        joined = "\n".join(says)
+        assert "story bank: 0/1 experiences have stories" in joined  # BSc not counted
+        assert "BSc" not in joined
+        says2 = []
+        run_stories(conn, storage, ask=_scripted([""]), say=says2.append)
+        assert any("story bank: 1/1" in s for s in says2)
+    finally:
+        conn.close()
+
+
+def test_garbage_at_substantiate_prompt_reprompts_and_is_not_data(tmp_path):
+    """Drive finding: a capability name typed at the y/n substantiate prompt
+    was swallowed as an answer. Garbage now re-prompts; the value is never
+    consumed as data."""
+    conn, storage = _instance(tmp_path)
+    experience = _seed_experience(conn)
+    fact = _seed_fact(conn, experience.id, "Built the order service")
+    _seed_capability(conn, name="python backend")
+    answers = [
+        "1", "S", "A", "O",
+        "python backend",   # garbage at the y/n prompt: re-asks
+        "y",                # then a real answer
+        "",                 # capability links done
+        "n",
+    ]
+    says = []
+    try:
+        run_stories(conn, storage, ask=_scripted(answers), say=says.append)
+        assert "invalid choice, expected y/n" in says
+        story = [e for e in SqliteEvidenceRepository(conn).list_all()
+                 if e.title.startswith("story: ")][0]
+        edges = SqliteCareerEdgeRepository(conn)
+        # The y answered the substantiate question; the capability name was
+        # never consumed as a SUPPORTS answer.
+        assert [e.target_id for e in edges.active_edges_from(
+            "evidence", story.id, "PROVES")] == [fact.id]
+        assert edges.active_edges_from("evidence", story.id, "SUPPORTS") == []
+    finally:
+        conn.close()
+
+
 def test_story_bank_resume_state_is_computed_from_data(tmp_path):
     """An experience with a story is not offered again; completeness reflects it."""
     conn, storage = _instance(tmp_path)

@@ -13,7 +13,11 @@ import sqlite3
 from domain.entities import ProfileFieldWrite
 from domain.ids import new_id
 from domain.ports import UserProfileRepository
-from domain.profile import validate_profile_field, validate_profile_value
+from domain.profile import (
+    normalize_profile_value,
+    validate_profile_field,
+    validate_profile_value,
+)
 
 
 class SqliteUserProfileRepository(UserProfileRepository):
@@ -28,6 +32,7 @@ class SqliteUserProfileRepository(UserProfileRepository):
                   resolution_id: str | None = None) -> None:
         validate_profile_field(field)
         validate_profile_value(field, value)
+        value = normalize_profile_value(field, value)
         if source == "resolution":
             raise NotImplementedError(
                 "resolution-sourced profile writes arrive with the Resolution protocol"

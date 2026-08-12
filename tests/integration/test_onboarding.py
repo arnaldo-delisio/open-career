@@ -458,6 +458,52 @@ def _raising(exc):
     return run
 
 
+def test_interrupt_during_families_init_says_family_answers_unsaved(
+        tmp_path, monkeypatch, capsys):
+    """The families flow buffers answers until the strategy version mints, so
+    an interrupt there gets its own accurate message (family answers not yet
+    saved), exit 130, and no version minted (Codex round 6). The generic
+    progress-saved message must not appear."""
+    instance = tmp_path / "instance"
+    migrate(instance / "open-career.sqlite3")
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
+    proposal = json.dumps([{
+        "name": "Backend Engineering", "rationale": "matches the approved state",
+        "target_seniority": None, "adjacent_titles": [],
+        "search_vocabulary": [], "target_capability_names": []}])
+    monkeypatch.setattr("adapters.models.claude_code.subprocess.run",
+                        _completed(stdout=json.dumps({"result": proposal})))
+    answers = iter([
+        "python backend", "strong", "",  # one capability -> approved state exists
+        "",                              # goals done
+        "", "", "", "",                  # basics skipped
+        "c",                             # family confirmed (buffered, not persisted)
+    ])
+
+    def fake_input(_prompt=""):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise KeyboardInterrupt from None  # interrupt at the emphasis prompt
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    with pytest.raises(SystemExit) as exc:
+        main(["onboard"])
+    assert exc.value.code == 130
+    out = capsys.readouterr().out
+    assert ("interrupted during family setup; family answers were not yet saved,"
+            " everything before this step is") in out
+    assert "everything answered so far is saved" not in out
+    conn = _conn(instance)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM strategy_versions").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM role_families").fetchone()[0] == 0
+        # Everything before the families step did persist.
+        assert SqliteCapabilityRepository(conn).get_by_name("python backend")
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize("fake_run,expected", [
     (_raising(subprocess.TimeoutExpired(cmd="claude", timeout=600)), "timed out after"),
     (_completed(returncode=2, stderr="boom"), "exited 2"),

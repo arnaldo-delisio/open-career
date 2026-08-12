@@ -47,13 +47,34 @@ def is_unquantified(statement: str) -> bool:
     return not any(ch.isdigit() for ch in statement)
 
 
+# Fact types where a scope/mechanism quantifier makes sense; 'other' (e.g.
+# exclusion lists, stances) is never asked for a number (drive finding).
+QUANTIFIABLE_FACT_TYPES = frozenset(
+    {"achievement", "responsibility", "scope", "metric", "skill_use"})
+
+
+def ask_yes_no(ask: Ask, say: Say, prompt: str, default: bool) -> bool:
+    """The one validated y/n prompt: y/yes/n/no, blank takes the default,
+    anything else re-asks (garbage is never consumed as data)."""
+    default_hint = "y" if default else "n"
+    while True:
+        raw = ask(f"{prompt} (y/n) [{default_hint}]: ").strip().lower()
+        if not raw:
+            return default
+        if raw in ("y", "yes"):
+            return True
+        if raw in ("n", "no"):
+            return False
+        say("invalid choice, expected y/n")
+
+
 def offer_quantifier(facts_repo: SqliteCareerFactRepository, fact_id: str,
-                     statement: str, ask: Ask, say: Say) -> None:
+                     statement: str, fact_type: str, ask: Ask, say: Say) -> None:
     """One optional follow-up on an unquantified confirmed fact. A supplied
     restatement is a user edit of the statement, approved by the act of
     stating it; the system never proposes a number (OC-5, spec: metric
     backfill). Skip costs one keypress."""
-    if not is_unquantified(statement):
+    if fact_type not in QUANTIFIABLE_FACT_TYPES or not is_unquantified(statement):
         return
     restated = ask(
         "  No number in that fact. Restate it with one (e.g. 'N clients',"
@@ -232,7 +253,7 @@ def run_evidence_intake(conn: sqlite3.Connection, ask: Ask, say: Say,
                 edge_type="PROVES", target_type="career_fact", target_id=fact.id,
                 claim_kind="fact", provenance="interview:evidence-intake",
                 created_by="user", user_verified=1))
-            offer_quantifier(facts_repo, fact.id, statement, ask, say)
+            offer_quantifier(facts_repo, fact.id, statement, fact.fact_type, ask, say)
         if checkpoint is not None and not checkpoint():
             return
 
@@ -243,15 +264,16 @@ def run_metric_catchup(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
     facts_repo = SqliteCareerFactRepository(conn)
     unquantified = [f for f in facts_repo.list_all()
                     if f.user_approved and f.status == "active"
+                    and f.fact_type in QUANTIFIABLE_FACT_TYPES
                     and is_unquantified(f.statement)]
     if not unquantified:
-        say("\nMetric catch-up: every approved fact already carries a number.")
+        say("\nMetric catch-up: every quantifiable approved fact already carries a number.")
         return
     say(f"\nMetric catch-up: {len(unquantified)} approved facts carry no number."
         " Honest quantifiers only; blank skips.")
     for fact in unquantified:
         say(f"\n[{fact.fact_type}] {fact.statement}")
-        offer_quantifier(facts_repo, fact.id, fact.statement, ask, say)
+        offer_quantifier(facts_repo, fact.id, fact.statement, fact.fact_type, ask, say)
 
 
 # Deepen items with no canonical profile field (OC-29's set is closed) and no
@@ -261,8 +283,27 @@ def run_metric_catchup(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
 _STATEMENT_FACT_ASKS = (
     ("skill_use", "Languages you speak, with levels"),
     ("other", "Travel willingness (e.g. up to 20%)"),
-    ("other", "Hard exclusions: companies or domains you will not apply to"),
 )
+
+
+def _ask_hard_exclusions(policies: SqliteUserPolicyRepository, ask: Ask, say: Say) -> None:
+    """Hard exclusions have exactly one home: `industry_pref.out`, written
+    through the audited policy seam and consumed deterministically by the
+    eligibility gate. Entries append to whatever the richer stories cluster
+    already holds; no fact is minted (drive reconciliation)."""
+    current = policies.get_policies().get("industry_pref") or {"in": [], "out": []}
+    raw = ask("Hard exclusions: companies or domains you will not apply to"
+              f" (comma-separated) [{', '.join(current['out'])}]: ").strip()
+    if not raw:
+        return
+    additions = [part.strip() for part in raw.split(",") if part.strip()]
+    # One ordered unique list across current entries and additions, first
+    # occurrence wins: duplicates inside one answer, and any already-present
+    # duplicates, both collapse (Codex round 5).
+    merged = list(dict.fromkeys(current["out"] + additions))
+    policies.set_policy("industry_pref", {"in": current["in"], "out": merged},
+                        source="user_edit")
+    say("industry_pref.out updated.")
 
 
 def _ask_statement_facts(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
@@ -308,6 +349,7 @@ def run_deepen(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
         for question in remaining_tier1:
             _ask_profile_question(profile_repo, question, ask, say)
     _ask_statement_facts(conn, ask, say)
+    _ask_hard_exclusions(policies, ask, say)
     run_evidence_intake(conn, ask, say)
     run_metric_catchup(conn, ask, say)
     say("\nDeepen done. The depth interview is `open-career stories`.")

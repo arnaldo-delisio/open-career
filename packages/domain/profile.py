@@ -71,6 +71,14 @@ def validate_profile_field(field: str) -> None:
         )
 
 
+def normalize_profile_value(field: str, value: str | None) -> str | None:
+    """Canonical storage form: a scheme-less URL that passed validation is
+    stored with https:// prefixed, so every stored link is directly usable."""
+    if value is not None and field in _URL_FIELDS and "://" not in value:
+        return f"https://{value}"
+    return value
+
+
 def validate_profile_value(field: str, value: str | None) -> None:
     """Shape-check the obviously mechanical fields (email, link URLs). None
     (clearing a field) is always allowed."""

@@ -124,6 +124,39 @@ def test_metric_catchup_revisits_only_unquantified_facts(tmp_path):
         conn.close()
 
 
+def test_metric_catchup_never_asks_on_non_quantifiable_fact_types(tmp_path):
+    """'other' facts (exclusion lists, stances) are not quantifiable: the
+    catch-up pass skips them entirely (drive finding)."""
+    conn = _conn(tmp_path)
+    try:
+        _approved_fact(conn, "Never adtech", fact_type="other")
+        prompts = []
+
+        def ask(prompt):
+            prompts.append(prompt)
+            return ""
+
+        run_metric_catchup(conn, ask=ask, say=lambda _: None)
+        assert prompts == []  # nothing asked
+        fact = SqliteCareerFactRepository(conn).list_all()[0]
+        assert fact.statement == "Never adtech"
+    finally:
+        conn.close()
+
+
+def test_yes_no_prompt_reprompts_on_garbage_and_consumes_nothing():
+    """A y/n prompt validates like every enum prompt: garbage re-asks and is
+    never consumed as data (drive finding: a capability name fell into one)."""
+    from apps.cli.interview import ask_yes_no
+
+    says = []
+    answers = iter(["backend design", "y"])
+    assert ask_yes_no(lambda _p: next(answers), says.append,
+                      "Link it?", default=False) is True
+    assert says == ["invalid choice, expected y/n"]
+    assert next(answers, "exhausted") == "exhausted"  # both answers consumed by the prompt
+
+
 def test_inline_backfill_in_the_cv_fact_walk_is_a_user_edit(tmp_path):
     """Confirming an unquantified fact offers one follow-up; the restatement is
     a user edit, approved. A skipped follow-up changes nothing (spec: metric
@@ -172,6 +205,74 @@ def test_inline_backfill_in_the_cv_fact_walk_is_a_user_edit(tmp_path):
         conn.close()
 
 
+def test_ctrl_c_mid_interview_exits_130_with_saved_note(tmp_path, monkeypatch, capsys):
+    """KeyboardInterrupt at the CLI entry is a one-line goodbye, exit 130,
+    never a traceback: every answer already persisted (drive finding)."""
+    import pytest
+
+    from adapters.storage.migrations import migrate as _migrate
+    from apps.cli.main import main
+
+    instance = tmp_path / "instance"
+    _migrate(instance / "open-career.sqlite3")
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
+
+    def interrupted(_prompt=""):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupted)
+    with pytest.raises(SystemExit) as exc:
+        main(["deepen"])
+    assert exc.value.code == 130
+    out = capsys.readouterr()
+    assert "interrupted; everything answered so far is saved" in out.out
+    assert "Traceback" not in out.err
+
+
+def test_non_interview_interrupt_keeps_default_behavior(tmp_path, monkeypatch, capsys):
+    """The progress-saved message is honest only for persist-as-you-go
+    interview commands; an interrupted export must not print it
+    (Codex round 5)."""
+    import pytest
+
+    from apps.cli import main as main_module
+
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(tmp_path))
+
+    def interrupted(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(main_module, "export_to_file", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        main_module.main(["export", str(tmp_path / "dump.json")])
+    assert "everything answered so far is saved" not in capsys.readouterr().out
+
+
+def test_hard_exclusions_merge_is_ordered_unique(tmp_path):
+    """Duplicates inside one comma-separated answer collapse, and
+    already-present duplicates collapse on the next merge, first occurrence
+    winning (Codex round 5)."""
+    from apps.cli.interview import _ask_hard_exclusions
+
+    conn = _conn(tmp_path)
+    try:
+        policies = SqliteUserPolicyRepository(conn)
+        _ask_hard_exclusions(policies, ask=_scripted(["adtech, gambling, adtech"]),
+                             say=lambda _: None)
+        assert policies.get_policies()["industry_pref"]["out"] == ["adtech", "gambling"]
+
+        # Pre-existing duplicates (written directly through the seam) collapse
+        # the next time the merge runs.
+        policies.set_policy("industry_pref",
+                            {"in": [], "out": ["adtech", "adtech", "gambling"]},
+                            source="user_edit")
+        _ask_hard_exclusions(policies, ask=_scripted(["defense"]), say=lambda _: None)
+        assert policies.get_policies()["industry_pref"]["out"] == [
+            "adtech", "gambling", "defense"]
+    finally:
+        conn.close()
+
+
 def test_deepen_walks_tier2_stance_facts_evidence_and_catchup(tmp_path):
     answers = [
         # 17 tier-2 profile fields, in registry order; only two answered
@@ -183,27 +284,30 @@ def test_deepen_walks_tier2_stance_facts_evidence_and_catchup(tmp_path):
         "always_decline",                           # eeo_stance
         # still-unset tier-1 fields (all 10 unset here): skip all
         "", "", "", "", "", "", "", "", "", "",
-        # stated facts: languages, travel, hard exclusions
-        "English C2, Italian native", "", "Never adtech",
+        # stated facts: languages, travel
+        "English C2, Italian native", "",
+        # hard exclusions -> industry_pref.out (one home, no fact)
+        "adtech, gambling",
         # evidence intake: one repository, then finish
         "repository", "open-career", "https://github.com/example/open-career",
-        "Built a career graph with 300 tests", "",   # fact offered, quantifier has digits
+        "Built a career graph with 300 tests",       # fact offered ('other': no quantifier ask)
         "",                                          # intake done
-        # metric catch-up: no approved unquantified facts remain (the two stated
-        # facts carry no digits... they do not; catch-up asks for each)
-        "", "",
+        # metric catch-up: nothing quantifiable remains unquantified
     ]
     conn = _conn(tmp_path)
     try:
         run_deepen(conn, ask=_scripted(answers), say=lambda _: None)
         fields = SqliteUserProfileRepository(conn).get_fields()
         assert fields == {"linkedin_url": "https://linkedin.com/in/jane"}
-        assert SqliteUserPolicyRepository(conn).get_policies()["eeo_stance"] == "always_decline"
+        policies = SqliteUserPolicyRepository(conn).get_policies()
+        assert policies["eeo_stance"] == "always_decline"
+        # Hard exclusions have one home: industry_pref.out, never a fact.
+        assert policies["industry_pref"] == {"in": [], "out": ["adtech", "gambling"]}
         facts = SqliteCareerFactRepository(conn).list_all()
         statements = {f.statement for f in facts}
         assert "English C2, Italian native" in statements
-        assert "Never adtech" in statements
         assert "Built a career graph with 300 tests" in statements
+        assert not any("adtech" in s for s in statements)
         assert all(f.user_approved and f.source == "interview" for f in facts)
         evidence = SqliteEvidenceRepository(conn).list_all()
         types = sorted(e.evidence_type for e in evidence)

@@ -26,6 +26,7 @@ from adapters.storage.sqlite_profile import SqliteUserProfileRepository
 from apps.cli.interview import (
     _ask_choice,
     _ask_profile_question,
+    ask_yes_no,
     offer_quantifier,
     run_evidence_intake,
     store_statement_file,
@@ -52,6 +53,15 @@ LOGISTICS_POLICY_KEYS = ("relocation_whitelist", "timezone_bounds",
                          "visa_details", "earliest_start")
 
 _STORY_NOTE_PREFIX = "story-for-experience:"
+
+# Behavioral stories come from work, not coursework: education rows are out of
+# the story bank and its completeness denominator (drive finding).
+STORY_EXPERIENCE_KINDS = ("role", "project", "venture", "other")
+
+
+def _story_experiences(conn) -> list:
+    return [e for e in SqliteExperienceRepository(conn).list_all()
+            if e.kind in STORY_EXPERIENCE_KINDS]
 
 
 def _now() -> str:
@@ -115,13 +125,12 @@ def _narratives_present(conn) -> set[str]:
 # --- cluster 1: story bank ----------------------------------------------------
 
 def _run_story_bank(conn, storage: StorageAdapter, ask: Ask, say: Say) -> None:
-    experiences_repo = SqliteExperienceRepository(conn)
     evidence_repo = SqliteEvidenceRepository(conn)
     facts_repo = SqliteCareerFactRepository(conn)
     edges_repo = SqliteCareerEdgeRepository(conn)
     capabilities_repo = SqliteCapabilityRepository(conn)
     covered = _experiences_with_stories(conn)
-    pending = [e for e in experiences_repo.list_all() if e.id not in covered]
+    pending = [e for e in _story_experiences(conn) if e.id not in covered]
     if not pending:
         say("Every experience already has a story. (Re-telling mints new"
             " evidence; old rows keep their hashes.)")
@@ -149,8 +158,8 @@ def _run_story_bank(conn, storage: StorageAdapter, ask: Ask, say: Say) -> None:
             if fact.experience_id != experience.id or not fact.user_approved \
                     or fact.status != "active":
                 continue
-            answer = ask(f"  Does it substantiate '{fact.statement}'? (y/n) [n]: ").strip().lower()
-            if answer in ("y", "yes"):
+            if ask_yes_no(ask, say, f"  Does it substantiate '{fact.statement}'?",
+                          default=False):
                 edges_repo.add(CareerEdge(
                     id=new_id("edge"), source_type="evidence", source_id=evidence_id,
                     edge_type="PROVES", target_type="career_fact", target_id=fact.id,
@@ -230,7 +239,7 @@ def _run_capability_deepening(conn, ask: Ask, say: Say) -> None:
                 edge_type="DEMONSTRATES", target_type="capability", target_id=capability.id,
                 claim_kind="fact", provenance="stories:capability-deepening",
                 created_by="user", user_verified=1))
-        offer_quantifier(facts_repo, fact.id, statement, ask, say)
+        offer_quantifier(facts_repo, fact.id, statement, fact.fact_type, ask, say)
         say("  chain minted (fact, evidence, PROVES, SUPPORTS, DEMONSTRATES).")
         if not pacer.checkpoint():
             return
@@ -274,9 +283,9 @@ def _run_preferences(conn, ask: Ask, say: Say) -> None:
     themes = _ask_str_list(ask, "\nMission themes that matter to you")
     if themes is not None:
         policies.set_policy("mission_themes", themes, source="user_edit")
-    say("\nHard exclusions: state them as 'out' entries above, or as a stated"
-        " fact in `open-career deepen` (the canonical field set carries no"
-        " hard-exclusions field).")
+    say("\nHard exclusions live in industry_pref's 'out' list (one home): state"
+        " them above, or via the hard-exclusions question in `open-career deepen`,"
+        " which appends to the same list.")
 
 
 def _run_logistics(conn, ask: Ask, say: Say) -> None:
@@ -364,7 +373,7 @@ def _run_narratives(conn, storage: StorageAdapter, ask: Ask, say: Say) -> None:
 # --- the menu -------------------------------------------------------------------
 
 def _completeness(conn) -> list[str]:
-    experiences = SqliteExperienceRepository(conn).list_all()
+    experiences = _story_experiences(conn)
     capabilities = SqliteCapabilityRepository(conn).list_all()
     with_stories = len(_experiences_with_stories(conn) & {e.id for e in experiences})
     covered = len(_capabilities_with_eligible_chain(conn))
@@ -408,7 +417,6 @@ def run_stories(conn: sqlite3.Connection, storage: StorageAdapter,
             continue
         say("")
         clusters[int(raw) - 1]()
-        answer = ask("\nRun another cluster? (y/n) [n]: ").strip().lower()
-        if answer not in ("y", "yes"):
+        if not ask_yes_no(ask, say, "\nRun another cluster?", default=False):
             say("Done for now; resume state is computed from the data itself.")
             return

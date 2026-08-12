@@ -128,6 +128,13 @@ def cmd_onboard(args: argparse.Namespace) -> None:
         if has_state and not any(f.status == "active" for f in families):
             try:
                 families_cli.run_families_init(conn, ClaudeCodeAdapter(), input, print)
+            except KeyboardInterrupt:
+                # The families flow (OC-33) buffers its answers until the
+                # strategy version mints, so the generic progress-saved
+                # message would lie here; say exactly what held.
+                print("\ninterrupted during family setup; family answers were"
+                      " not yet saved, everything before this step is")
+                raise SystemExit(130)
             except _CLI_ERRORS as e:
                 print(f"families init skipped: {e}", file=sys.stderr)
                 print("Run `open-career families init` when ready.")
@@ -137,6 +144,10 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     finally:
         conn.close()
 
+
+# Commands whose every answer persists the moment it is given, so an interrupt
+# honestly loses nothing (the interview sittings, OC-35).
+_INTERVIEW_COMMANDS = ("onboard", "deepen", "stories")
 
 _CLI_ERRORS = (StrategyError, FamilyProposalError, CvModelError, PackageStateError,
                package_cmd.PackageCliError, ModelCallError, ModelUnavailableError)
@@ -488,6 +499,14 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         args.func(args)
+    except KeyboardInterrupt:
+        # Only the persist-as-you-go interview commands can honestly promise
+        # saved progress; every other command keeps its previous interrupt
+        # behavior (Codex round 5).
+        if args.command not in _INTERVIEW_COMMANDS:
+            raise
+        print("\ninterrupted; everything answered so far is saved")
+        raise SystemExit(130)
     except sqlite3.Error as e:
         # One line, never a traceback. Only schema-shaped failures get the
         # invalid-instance wording; a locked db or I/O error is not one.

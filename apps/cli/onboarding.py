@@ -28,7 +28,7 @@ from domain.entities import Capability, CareerFact, CareerGoal, Evidence, Experi
 from domain.extraction import CvExtraction, CvExtractionService
 from domain.ids import new_id
 from domain.ports import ModelAdapter, StorageAdapter
-from apps.cli.interview import offer_quantifier
+from apps.cli.interview import ask_yes_no, offer_quantifier
 from domain.profile import InvalidProfileValueError
 from prompts import load_prompt
 
@@ -211,7 +211,7 @@ def _confirm_drafts(facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCa
         facts_repo.set_approval(fact_id, statement, _now())
         # Inline metric backfill (OC-35, layer 1): one optional follow-up while
         # context is freshest; a supplied restatement is a user edit, approved.
-        offer_quantifier(facts_repo, fact_id, statement, ask, say)
+        offer_quantifier(facts_repo, fact_id, statement, fact.fact_type, ask, say)
         edges_repo.add(CareerEdge(
             id=new_id("edge"), source_type="evidence", source_id=cv_evidence.id,
             edge_type="PROVES", target_type="career_fact", target_id=fact_id,
@@ -244,10 +244,9 @@ def _link_evidence_to_capability(evidence_repo: SqliteEvidenceRepository,
         if any(e.target_id == capability.id
                for e in edges_repo.active_edges_from("evidence", evidence.id, "SUPPORTS")):
             continue
-        answer = ask(
-            f"Link evidence '{evidence.title}' ({len(proven)} confirmed facts)"
-            f" as supporting '{capability.name}'? (y/n) [y]: ").strip().lower()
-        if answer in ("", "y", "yes"):
+        if ask_yes_no(ask, say,
+                      f"Link evidence '{evidence.title}' ({len(proven)} confirmed facts)"
+                      f" as supporting '{capability.name}'?", default=True):
             edges_repo.add(CareerEdge(
                 id=new_id("edge"), source_type="evidence", source_id=evidence.id,
                 edge_type="SUPPORTS", target_type="capability", target_id=capability.id,

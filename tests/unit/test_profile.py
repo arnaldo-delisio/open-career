@@ -87,6 +87,17 @@ def test_url_validation_accepts_real_url_shapes(repo, url):
     assert repo.get_fields()["portfolio_url"] == url
 
 
+def test_scheme_less_urls_normalize_to_https_at_the_seam(repo):
+    """Drive finding: github.com/x stored verbatim was not directly usable;
+    the seam stores https://github.com/x and audits the normalized value."""
+    repo.set_field("github_url", "github.com/x", source="user_edit")
+    assert repo.get_fields()["github_url"] == "https://github.com/x"
+    assert repo.list_writes()[-1].new_value == "https://github.com/x"
+    # A URL that already carries a scheme is untouched.
+    repo.set_field("website_url", "http://example.com", source="user_edit")
+    assert repo.get_fields()["website_url"] == "http://example.com"
+
+
 def test_free_text_fields_stay_free(repo):
     repo.set_field("notice_period", "3 months, negotiable!", source="user_edit")
     assert repo.get_fields()["notice_period"] == "3 months, negotiable!"
