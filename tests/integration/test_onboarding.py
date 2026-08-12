@@ -68,8 +68,9 @@ def test_onboarding_with_cv_confirm_edit_reject(instance, tmp_path):
     cv.write_text("Jane Placeholder\nBackend Engineer at Acme 2021-2023\n")
     answers = [
         "confirm",                        # experience 1: confirm
-        "confirm",                        # fact 1: confirm as-is
+        "confirm", "",                    # fact 1: confirm as-is, quantifier skipped
         "edit", "Contributed to the platform team",  # fact 2: scope inflation caught, edited
+        "",                               # fact 2: quantifier skipped
         "reject",                         # fact 3: rejected
         "",                               # capabilities: none
         "",                               # goals: none
@@ -114,7 +115,7 @@ def test_rejected_experience_is_never_persisted_nor_its_facts(instance, tmp_path
     cv.write_text("Jane Placeholder\n")
     answers = [
         "reject",     # the only experience: rejected (drops facts 1 and 2)
-        "confirm",    # fact 3 (no experience): confirmed
+        "confirm", "",  # fact 3 (no experience): confirmed, quantifier skipped
         "",           # capabilities: none
         "",           # goals: none
         "", "", "", "",   # profile basics skipped
@@ -134,7 +135,7 @@ def test_rejected_experience_is_never_persisted_nor_its_facts(instance, tmp_path
 def test_two_cvs_with_the_same_basename_do_not_collide(instance, tmp_path):
     """Locators derive from evidence ids: a second upload named identically
     leaves the first file intact and every hash matching its own file."""
-    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", "", ""]
+    answers = ["confirm", "confirm", "", "confirm", "", "confirm", "", "", "", "", "", "", ""]
     conn = _conn(instance)
     try:
         for directory, content in (("a", "first CV body\n"), ("b", "second CV body\n")):
@@ -200,7 +201,7 @@ def test_capability_step_offers_linking_cv_evidence(instance, tmp_path):
     cv = tmp_path / "cv.txt"
     cv.write_text("Jane Placeholder\nBackend Engineer at Acme 2021-2023\n")
     answers = [
-        "confirm", "confirm", "confirm", "confirm",  # experience + 3 facts
+        "confirm", "confirm", "", "confirm", "", "confirm", "",  # experience + 3 facts (quantifiers skipped)
         "Backend service design", "strong",          # capability + strength
         "y",                                         # link the CV evidence
         "",                                          # capabilities done
@@ -230,7 +231,7 @@ def test_capability_step_link_declined_mints_nothing(instance, tmp_path):
     cv = tmp_path / "cv.txt"
     cv.write_text("Jane Placeholder\n")
     answers = [
-        "confirm", "confirm", "confirm", "confirm",
+        "confirm", "confirm", "", "confirm", "", "confirm", "",
         "Backend service design", "strong",
         "n",                                         # decline the link
         "", "", "", "", "", "",
@@ -285,7 +286,7 @@ def test_onboarding_with_pdf_cv_extracts_via_pdftotext(instance, tmp_path, monke
             seen_prompts.append(prompt)
             return EXTRACTION
 
-    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", "", ""]
+    answers = ["confirm", "confirm", "", "confirm", "", "confirm", "", "", "", "", "", "", ""]
     conn = _conn(instance)
     try:
         run_onboarding(conn, LocalStorageAdapter(instance), CapturingModel(), cv,
@@ -311,8 +312,7 @@ def test_cli_onboard_degrades_when_pdftotext_is_absent(tmp_path, monkeypatch, ca
         raise FileNotFoundError("pdftotext")
 
     monkeypatch.setattr("apps.cli.onboarding.subprocess.run", raising_run)
-    answers = iter(["", "", "", "", "", ""])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")  # every prompt skipped, tier-1 included
 
     main(["onboard", str(cv)])  # must not raise SystemExit
 
@@ -346,7 +346,7 @@ def test_invalid_utf8_pdftotext_output_is_replaced_not_a_crash(instance, tmp_pat
             seen_prompts.append(prompt)
             return EXTRACTION
 
-    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", "", ""]
+    answers = ["confirm", "confirm", "", "confirm", "", "confirm", "", "", "", "", "", "", ""]
     conn = _conn(instance)
     try:
         run_onboarding(conn, LocalStorageAdapter(instance), CapturingModel(), cv,
@@ -373,8 +373,7 @@ def test_cli_onboard_degrades_when_pdftotext_output_is_undecodable(tmp_path, mon
         "apps.cli.onboarding.subprocess.run",
         lambda argv, capture_output=None: subprocess.CompletedProcess(
             argv, 0, stdout=Undecodable(), stderr=b""))
-    answers = iter(["", "", "", "", "", ""])
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")  # every prompt skipped, tier-1 included
 
     main(["onboard", str(cv)])  # must not raise
 
@@ -475,8 +474,7 @@ def test_cli_onboard_degrades_when_model_call_fails(tmp_path, monkeypatch, capsy
     cv.write_text("Jane Placeholder\n")
     monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
     monkeypatch.setattr("adapters.models.claude_code.subprocess.run", fake_run)
-    answers = iter(["", "", "", "", "", ""])  # no capabilities, no goals, basics skipped
-    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "")  # every prompt skipped, tier-1 included
 
     main(["onboard", str(cv)])  # must not raise SystemExit
 

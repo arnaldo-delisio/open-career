@@ -10,13 +10,13 @@ scope ledger at `../DECISIONS.md`; this repo carries only code.
 ```
 apps/
   api/          FastAPI app (health endpoint, repository wiring)
-  cli/          open-career CLI: init, migrate, onboard, families, package, profile,
-                edges, export, import
+  cli/          open-career CLI: init, migrate, onboard, deepen, stories, families,
+                package, profile, policy, edges, export, import
   extension/    placeholder (all backend calls route through one service-worker module)
 packages/
   domain/       entities, ports, and domain services (traversal, selection, CV content
-                model, grounding verifier, generation pipeline, ATS check, profile field
-                set); no framework or storage imports
+                model, grounding verifier, generation pipeline, ATS check, profile and
+                policy sets, question registry); no framework or storage imports
   schemas/      canonical field schema (planned)
   prompts/      prompt assets (CV extraction)
 adapters/
@@ -54,9 +54,24 @@ uv run uvicorn apps.api.main:app   # then: curl localhost:8000/health
 Onboarding is CV-first: `open-career onboard [cv.txt]` stores the CV, extracts draft
 experiences and facts through headless Claude Code (`claude -p`, subscription-backed, no
 API key; the model proposes structure only and every draft is confirmed, edited, or
-rejected interactively), then asks the gap questions (capabilities, goals, profile
-basics). Without a CV it runs the same questions from a blank slate. Nothing the model
-drafts is usable for generation until approved.
+rejected interactively), asks the gap questions (capabilities, goals, profile basics),
+flows into the role-families step, then asks the must-ask block (work authorization,
+location/remote/relocation, notice period, compensation floor and target). Without a CV
+it runs the same questions from a blank slate. Nothing the model drafts is usable for
+generation until approved, and confirming an unquantified fact offers one optional
+follow-up for an honest number (a user edit; the system never suggests one).
+
+The interview continues whenever it earns its time (spec: the scope's
+`decisions/onboarding-interview-design.md`, OC-35): `open-career deepen` walks the
+remaining canonical fields (links, EEO stance and fields, consents), takes additional
+evidence (repos, portfolio pieces, URLs), and runs the metric catch-up pass;
+`open-career stories` is the resumable depth interview, six clusters chosen from a menu
+showing per-cluster completeness (story bank, capability evidence deepening, preferences
+and dealbreakers, non-CV inventory, narratives, logistics), one cluster per run by
+default, resume state computed from the data itself. Standing stances live in the audited
+policy seam: `open-career policy set <key> <json-or-scalar>` and `open-career policy
+show` (closed key set: EEO stance, compensation floor/target with scalar preference,
+preference and logistics policies; deterministic comparison rules in code, OC-22).
 
 Package generation (spec: the scope's `decisions/package-generation-design.md`, OC-33/
 OC-34): `open-career families init` proposes target role families from approved state
@@ -79,8 +94,10 @@ canonical field set, every write audited), `open-career edges list [--untyped]` 
 edges migrated from the 0001 schema, excluded from traversal until re-typed),
 `open-career edges add` (interactive, vocabulary-guarded; e.g. a SUPPORTS link so the
 family walk can reach evidence-backed facts),
-`open-career export <file.json>`, `open-career import <file.json>` (import fully replaces
-table contents; schema and format in `docs/data-model.md`). Instance location defaults to
+`open-career export <file.json|file.zip>`, `open-career import <file.json|file.zip>`
+(import fully replaces table contents; `.zip` bundles and restores every referenced
+instance file, hash-verified; `.json` is database-only; schema and format in
+`docs/data-model.md`). Instance location defaults to
 `./instance` (override with `OPEN_CAREER_INSTANCE`). Tests: `uv run pytest` (the suite
 never calls the real model CLI; `scripts/smoke_claude_extraction.py` is the manual live
 check).

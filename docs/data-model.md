@@ -20,6 +20,25 @@ database currently holds. All ids are TEXT, application-generated prefixed ULIDs
 | `user_profile` | single JSON row of the 28 canonical fields (OC-29) | `CHECK (id = 1)`, `json_valid`; closed field set validated in `packages/domain/profile.py` |
 | `profile_field_writes` | audit trail of every profile mutation | appended by the one write seam (`adapters/storage/sqlite_profile.py`) |
 
+## Policy tables (migration 0004)
+
+Spec: the scope's `decisions/onboarding-interview-design.md` (OC-35). `user_policies` is a
+single JSON row (`CHECK (id = 1)`, `json_valid`) of standing stances that *derive* answers
+rather than being form answers themselves: `eeo_stance`, `compensation_floor`,
+`compensation_target` (with the user's `scalar` pre-selection for single-number salary
+fields), the preference policies (`company_stage_pref`, `company_size_pref`,
+`industry_pref`, `work_track`, `mission_themes`), and the logistics policies
+(`relocation_whitelist`, `timezone_bounds`, `visa_details`, `earliest_start`). The key set
+is closed and per-key shapes are validated in `packages/domain/policies.py` (amounts and
+offsets are integers, never floats, OC-22); every write goes through
+`adapters/storage/sqlite_policies.py`, which appends a JSON-encoded audit row to
+`policy_writes` (mirroring `profile_field_writes`). The deterministic compensation
+comparison rules (fixed period factors, no currency conversion, conservative range
+comparison, unknown/equity-only skip with reason) are pure functions in the same domain
+module. The typed question registry generating the interview flows lives in
+`packages/domain/questions.py`; a completeness test asserts every canonical field and
+policy has an intentional disposition.
+
 ## career_edges
 
 One generic edge table carries every relationship:
@@ -71,6 +90,23 @@ the closed canonical set, and every active typed edge must satisfy the edge voca
 with both endpoints present in the dump (`'unknown'`-typed legacy rows exempt). Rows then
 load in one transaction with foreign keys verified before commit: import is a **full
 replace** of each table's contents, all-or-nothing. A failed load leaves the data
-unchanged; the migration and its backup, once performed, stand. Note that export dumps
-rows and import loads them verbatim: exported files carry personal career data and belong
-under `instance/` or outside the repo, never in tracked paths (OC-26).
+unchanged; the migration and its backup, once performed, stand. Dump semantics also cover
+`user_policies` (keys must be in the closed policy set). Note that export dumps rows and
+import loads them verbatim: exported files carry personal career data and belong under
+`instance/` or outside the repo, never in tracked paths (OC-26).
+
+**JSON export is database-only, stated plainly:** evidence locators travel but their
+instance files do not, so a JSON-restored instance has correct rows pointing at absent
+files. The complete movable unit is the archive form: `open-career export <file.zip>`
+writes `dump.json` plus `files/<locator>` for every instance file referenced by evidence
+locators and package artifacts (context snapshots and rendered PDFs); URL and
+absolute-path locators are external references and travel as rows only. Export refuses to
+bundle a referenced file that is missing, no longer matches its recorded hash, or whose
+row records no hash at all (a bundle must be hash-verifiable end to end). Import of a
+`.zip` proves everything **before** anything durable changes: every bundled file verified
+against its row's recorded content hash, archives missing referenced files or carrying
+unreferenced ones rejected, every locator checked for containment inside the instance root
+(traversal rejected), every destination checked installable, and all bytes staged to a
+temp area; only then the database loads and the staged files install. A tampered,
+truncated, traversing, or uninstallable bundle fails with the database and files
+untouched.

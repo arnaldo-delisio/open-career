@@ -12,7 +12,7 @@ ALL_TABLES = {
     "career_edges", "experiences", "career_facts", "evidence", "capabilities",
     "role_families", "career_goals", "strategy_versions",
     "strategy_role_family_allocations", "user_profile", "profile_field_writes",
-    "packages", "package_versions",
+    "packages", "package_versions", "user_policies", "policy_writes",
 }
 
 
@@ -251,6 +251,21 @@ def test_import_rejects_unknown_profile_field(tmp_path):
         {"id": 1, "fields_json": json.dumps({"full_name": "Jane", "favourite_color": "blue"}),
          "updated_at": "2026-08-11T00:00:00Z"}])
     with pytest.raises(ValueError, match=r"unknown profile fields \['favourite_color'\]"):
+        import_db(tmp_path / "db.sqlite3", dump)
+
+
+@pytest.mark.parametrize("policies,message", [
+    ({"compensation_floor": {"amount": "lots", "currency": "EUR", "period": "annual"}},
+     "positive integer"),
+    ({"timezone_bounds": {"min_utc_offset": 3, "max_utc_offset": -2}}, "must not exceed"),
+], ids=["malformed-compensation-floor", "malformed-timezone-bounds"])
+def test_import_rejects_malformed_policy_values(tmp_path, policies, message):
+    """Imported policies pass the same per-key shape validation as the write
+    seam (Codex round 1): a malformed value is rejected before any write."""
+    dump = _full_dump(user_policies=[
+        {"id": 1, "policies_json": json.dumps(policies),
+         "updated_at": "2026-08-12T00:00:00Z"}])
+    with pytest.raises(ValueError, match=f"user_policies row 0: .*{message}"):
         import_db(tmp_path / "db.sqlite3", dump)
 
 

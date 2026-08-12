@@ -9,6 +9,7 @@ from domain.entities import (
     CareerGoal,
     Evidence,
     Experience,
+    PolicyWrite,
     ProfileFieldWrite,
     RoleFamily,
     StrategyVersion,
@@ -145,6 +146,26 @@ class UserProfileRepository(ABC):
 
     @abstractmethod
     def list_writes(self) -> list[ProfileFieldWrite]: ...
+
+
+class UserPolicyRepository(ABC):
+    """The policy write seam (migration 0004), mirroring the profile seam: one
+    mutation operation, closed key set validated in the domain
+    (domain/policies.py), every write audited in policy_writes."""
+
+    @abstractmethod
+    def get_policies(self) -> dict: ...
+
+    @abstractmethod
+    def set_policy(self, key: str, value, source: str,
+                   resolution_id: str | None = None) -> None:
+        """Validate key (closed policy set) and per-key value shape, write the
+        policy, append the audit row, in one transaction. Only
+        source='user_edit' is implemented now; 'resolution' is the reserved
+        Resolution seam (OC-6)."""
+
+    @abstractmethod
+    def list_writes(self) -> list[PolicyWrite]: ...
 
 
 class PackageRepository(ABC):

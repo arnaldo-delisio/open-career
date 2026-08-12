@@ -14,7 +14,12 @@ from adapters.models.claude_code import ClaudeCodeAdapter, ModelCallError
 from adapters.storage.instance import backups_dir, db_path, instance_dir
 from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import migrate
-from adapters.storage.portability import export_to_file, import_from_file
+from adapters.storage.portability import (
+    export_archive,
+    export_to_file,
+    import_archive,
+    import_from_file,
+)
 from adapters.storage.sqlite_edges import EdgeValidationError, SqliteCareerEdgeRepository
 from domain.edges import EDGE_VOCABULARY, CareerEdge
 from domain.ids import new_id
@@ -30,8 +35,12 @@ from adapters.storage.sqlite_entities import (
 from domain.profile import InvalidProfileValueError, UnknownProfileFieldError
 from adapters.storage.family_strategy import StrategyError
 from adapters.storage.sqlite_entities import SqliteRoleFamilyRepository
+from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from apps.cli import families as families_cli
+from apps.cli import interview as interview_cli
 from apps.cli import package_cmd
+from apps.cli import stories as stories_cli
+from domain.policies import InvalidPolicyValueError, UnknownPolicyKeyError
 from domain.cv_model import CvModelError
 from domain.family_proposal import FamilyProposalError
 from domain.packages import PackageStateError
@@ -63,17 +72,24 @@ def cmd_migrate(_args: argparse.Namespace) -> None:
 def cmd_export(args: argparse.Namespace) -> None:
     out = Path(args.file)
     try:
-        export_to_file(db_path(), out)
+        if out.suffix == ".zip":
+            export_archive(db_path(), instance_dir(), out)
+        else:
+            export_to_file(db_path(), out)
     except ValueError as e:
         print(f"export failed: {e}", file=sys.stderr)
         raise SystemExit(1)
-    print(f"exported to {out}")
+    note = "" if out.suffix == ".zip" else " (database only; use a .zip name to bundle instance files)"
+    print(f"exported to {out}{note}")
 
 
 def cmd_import(args: argparse.Namespace) -> None:
     src = Path(args.file)
     try:
-        import_from_file(db_path(), src)
+        if src.suffix == ".zip":
+            import_archive(db_path(), instance_dir(), src)
+        else:
+            import_from_file(db_path(), src)
     except (ValueError, json.JSONDecodeError) as e:
         print(f"import failed: {e}", file=sys.stderr)
         raise SystemExit(1)
@@ -115,6 +131,9 @@ def cmd_onboard(args: argparse.Namespace) -> None:
             except _CLI_ERRORS as e:
                 print(f"families init skipped: {e}", file=sys.stderr)
                 print("Run `open-career families init` when ready.")
+        # Sitting one's must-ask block (OC-35): sequenced after the CV walk and
+        # the families step, attached around that seam, never inside it.
+        interview_cli.run_tier1(conn, input, print)
     finally:
         conn.close()
 
@@ -174,6 +193,53 @@ def cmd_package(args: argparse.Namespace) -> None:
                 conn, storage, print))
     finally:
         conn.close()
+
+
+def cmd_deepen(_args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        interview_cli.run_deepen(conn, input, print)
+    finally:
+        conn.close()
+
+
+def cmd_stories(_args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        stories_cli.run_stories(conn, LocalStorageAdapter(instance_dir()), input, print)
+    finally:
+        conn.close()
+
+
+def cmd_policy_set(args: argparse.Namespace) -> None:
+    # A value that parses as JSON is taken structurally (objects, lists,
+    # integers); anything else is the string scalar the user typed.
+    try:
+        value = json.loads(args.value)
+    except json.JSONDecodeError:
+        value = args.value
+    conn = _connect()
+    try:
+        SqliteUserPolicyRepository(conn).set_policy(args.key, value, source="user_edit")
+    except (UnknownPolicyKeyError, InvalidPolicyValueError) as e:
+        print(f"policy set failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+    finally:
+        conn.close()
+    print(f"policy.{args.key} set")
+
+
+def cmd_policy_show(_args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        policies = SqliteUserPolicyRepository(conn).get_policies()
+    finally:
+        conn.close()
+    print("Policies:")
+    if not policies:
+        print("  (empty)")
+    for key in sorted(policies):
+        print(f"  {key}: {json.dumps(policies[key])}")
 
 
 def cmd_profile_set(args: argparse.Namespace) -> None:
@@ -328,6 +394,13 @@ def main(argv: list[str] | None = None) -> None:
     p_onboard.add_argument("cv", nargs="?", default=None, help="optional CV text file")
     p_onboard.set_defaults(func=cmd_onboard)
 
+    sub.add_parser(
+        "deepen", help="sitting two: remaining canonical fields, evidence intake,"
+                       " metric catch-up").set_defaults(func=cmd_deepen)
+    sub.add_parser(
+        "stories", help="sitting three: depth interview (six clusters, resumable)"
+    ).set_defaults(func=cmd_stories)
+
     sub.add_parser("show", help="print the stored career state, human-readable").set_defaults(func=cmd_show)
 
     p_profile = sub.add_parser("profile", help="canonical profile fields (closed set, audited writes)")
@@ -337,6 +410,16 @@ def main(argv: list[str] | None = None) -> None:
     p_profile_set.add_argument("value")
     p_profile_set.set_defaults(func=cmd_profile_set)
     profile_sub.add_parser("show", help="print the profile fields").set_defaults(func=cmd_profile_show)
+
+    p_policy = sub.add_parser(
+        "policy", help="standing policies (closed set, audited writes; OC-35)")
+    policy_sub = p_policy.add_subparsers(dest="policy_command", required=True)
+    p_policy_set = policy_sub.add_parser("set", help="set one policy")
+    p_policy_set.add_argument("key")
+    p_policy_set.add_argument("value", help="JSON for structured policies"
+                              " (e.g. '{\"amount\": 70000, ...}'), plain text for scalars")
+    p_policy_set.set_defaults(func=cmd_policy_set)
+    policy_sub.add_parser("show", help="print the stored policies").set_defaults(func=cmd_policy_show)
 
     p_edges = sub.add_parser("edges", help="career graph edges")
     edges_sub = p_edges.add_subparsers(dest="edges_command", required=True)
@@ -391,12 +474,15 @@ def main(argv: list[str] | None = None) -> None:
     package_sub.add_parser("recover", help="claim expired generation leases, list orphans"
                            ).set_defaults(func=cmd_package)
 
-    p_export = sub.add_parser("export", help="dump the instance database to JSON")
-    p_export.add_argument("file", help="output JSON file")
+    p_export = sub.add_parser(
+        "export", help="dump the instance (.json = database only,"
+                       " .zip = database + referenced instance files)")
+    p_export.add_argument("file", help="output file (.json or .zip)")
     p_export.set_defaults(func=cmd_export)
 
-    p_import = sub.add_parser("import", help="load a JSON dump into the instance database")
-    p_import.add_argument("file", help="input JSON file")
+    p_import = sub.add_parser(
+        "import", help="load a dump (.zip restores bundled files, hash-verified)")
+    p_import.add_argument("file", help="input file (.json or .zip)")
     p_import.set_defaults(func=cmd_import)
 
     args = parser.parse_args(argv)

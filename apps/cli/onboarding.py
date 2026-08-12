@@ -28,6 +28,7 @@ from domain.entities import Capability, CareerFact, CareerGoal, Evidence, Experi
 from domain.extraction import CvExtraction, CvExtractionService
 from domain.ids import new_id
 from domain.ports import ModelAdapter, StorageAdapter
+from apps.cli.interview import offer_quantifier
 from domain.profile import InvalidProfileValueError
 from prompts import load_prompt
 
@@ -208,6 +209,9 @@ def _confirm_drafts(facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCa
             if edited:
                 statement = edited
         facts_repo.set_approval(fact_id, statement, _now())
+        # Inline metric backfill (OC-35, layer 1): one optional follow-up while
+        # context is freshest; a supplied restatement is a user edit, approved.
+        offer_quantifier(facts_repo, fact_id, statement, ask, say)
         edges_repo.add(CareerEdge(
             id=new_id("edge"), source_type="evidence", source_id=cv_evidence.id,
             edge_type="PROVES", target_type="career_fact", target_id=fact_id,

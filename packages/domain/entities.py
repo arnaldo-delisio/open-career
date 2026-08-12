@@ -139,6 +139,20 @@ class StrategyAllocation:
 
 
 @dataclass(frozen=True)
+class PolicyWrite:
+    """Audit row appended by every policy mutation (migration 0004), mirroring
+    ProfileFieldWrite: old/new values are JSON-encoded policy values."""
+
+    id: str
+    key: str
+    old_value: str | None
+    new_value: str | None
+    source: ProfileWriteSource
+    resolution_id: str | None = None
+    created_at: str | None = None
+
+
+@dataclass(frozen=True)
 class ProfileFieldWrite:
     """Audit row appended by every profile mutation: a changed field is always
     attributable, and narrower-than-GLOBAL answers have no path in."""
