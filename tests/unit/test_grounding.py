@@ -330,6 +330,36 @@ def test_omitted_confirmed_education_row_fails_coverage():
     assert "coverage" in rules(report)
 
 
+def test_omitted_skeleton_fields_fail():
+    """Null is legal only where the canonical value is null: omitting a
+    confirmed org or date is as wrong as altering it (an omitted end date
+    would render as 'Present')."""
+    for field in ("org", "start_date", "end_date"):
+        report = verify(make_cv(entry_overrides={field: None}))
+        assert "skeleton" in rules(report), field
+    context = make_context(experiences=(EXP, EXP2, EDU))
+    bare = CvExperienceEntry(experience_id=EDU.id, title=EDU.title, org=EDU.org,
+                             start_date=EDU.start_date, end_date=None, bullets=())
+    report = verify(_cv_with(experiences=make_cv().experiences,
+                             education=(bare,)), context)
+    assert "skeleton" in rules(report)
+
+
+def test_duplicated_entries_fail_coverage():
+    """A canonical row renders at most once, within and across sections."""
+    context = make_context(experiences=(EXP, EXP2, EDU))
+    edu = _entry(EDU)
+    within = verify(_cv_with(experiences=make_cv().experiences,
+                             education=(edu, edu)), context)
+    assert "coverage" in rules(within)
+    across = verify(CvModel(header=make_cv().header, summary="",
+                            skills=make_cv().skills,
+                            experiences=make_cv().experiences,
+                            projects=(_entry(EDU),), education=(edu,),
+                            meta=make_cv().meta), context)
+    assert "coverage" in rules(across)
+
+
 def test_out_of_order_experiences_fail():
     context = make_context()
     older = _entry(EXP2, bullets=(Bullet(

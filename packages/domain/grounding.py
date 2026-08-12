@@ -200,13 +200,15 @@ class GroundingVerifier:
                                     "experience_id is not a confirmed experience row"))
             return findings
         # Skeleton fields directly against the confirmed canonical row: a
-        # valid canonical date needs no repeating fact.
+        # valid canonical date needs no repeating fact. Every field is
+        # compared unconditionally: null is legal only where the canonical
+        # value is null (an omitted end date must not render as "Present").
         for field, rendered, canonical in (
                 ("title", entry.title, experience["title"]),
                 ("org", entry.org, experience["org"]),
                 ("start_date", entry.start_date, experience["start_date"]),
                 ("end_date", entry.end_date, experience["end_date"])):
-            if rendered is not None and _neq(rendered, canonical):
+            if _neq(rendered, canonical):
                 findings.append(Finding(
                     "skeleton", f"{element}.{field}",
                     f"'{rendered}' does not match the canonical row value '{canonical}'"))
@@ -284,9 +286,21 @@ class GroundingVerifier:
 
     def _check_completeness(self, cv: CvModel) -> list[Finding]:
         """Every confirmed education/project row in the context must render
-        (skeleton-only when factless): a CV omitting confirmed education is a
-        wrong artifact, not a safe one."""
+        (skeleton-only when factless), and every canonical row renders at
+        most once across all sections: a CV omitting confirmed education is a
+        wrong artifact, and so is one padding itself with duplicates."""
         findings = []
+        rendered: dict[str, list[str]] = {}
+        for section, entries in (("experiences", cv.experiences),
+                                 ("projects", cv.projects), ("education", cv.education)):
+            for entry in entries:
+                rendered.setdefault(entry.experience_id, []).append(section)
+        for experience_id, sections in sorted(rendered.items()):
+            if len(sections) > 1:
+                findings.append(Finding(
+                    "coverage", f"[{experience_id}]",
+                    f"experience_id renders {len(sections)} times"
+                    f" ({', '.join(sections)}); a canonical row renders at most once"))
         present = {"projects": {e.experience_id for e in cv.projects},
                    "education": {e.experience_id for e in cv.education}}
         for experience_id, row in sorted(self._view["experiences"].items()):
