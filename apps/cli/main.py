@@ -15,7 +15,9 @@ from adapters.storage.instance import backups_dir, db_path, instance_dir
 from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import migrate
 from adapters.storage.portability import export_to_file, import_from_file
-from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
+from adapters.storage.sqlite_edges import EdgeValidationError, SqliteCareerEdgeRepository
+from domain.edges import EDGE_VOCABULARY, CareerEdge
+from domain.ids import new_id
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
 from apps.cli.onboarding import CvReadError, run_onboarding
 from domain.ports import ModelUnavailableError
@@ -269,6 +271,51 @@ def cmd_edges_list(args: argparse.Namespace) -> None:
               f" created_by={e.created_by} verified={e.user_verified}")
 
 
+def run_edges_add(conn, ask, say) -> None:
+    """Guarded interactive edge repair (e.g. SUPPORTS links the family walk is
+    missing): endpoint types come from the vocabulary, endpoint existence and
+    duplicates are validated by the repository, and the edge lands
+    user-created, user-verified, generation-eligible."""
+    say("Edge types:")
+    for edge_type in sorted(EDGE_VOCABULARY):
+        source_type, target_type = EDGE_VOCABULARY[edge_type]
+        say(f"  {edge_type}: {source_type} -> {target_type}")
+    try:
+        edge_type = ask("edge type: ").strip().upper()
+        if edge_type not in EDGE_VOCABULARY:
+            raise SystemExit(_cli_error(f"unknown edge type '{edge_type}'"))
+        source_type, target_type = EDGE_VOCABULARY[edge_type]
+        source_id = ask(f"{source_type} id: ").strip()
+        target_id = ask(f"{target_type} id: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        raise SystemExit(_cli_error("aborted (input ended); nothing persisted"))
+    if not source_id or not target_id:
+        raise SystemExit(_cli_error("both endpoint ids are required; nothing persisted"))
+    try:
+        edge = SqliteCareerEdgeRepository(conn).add(CareerEdge(
+            id=new_id("edge"), source_type=source_type, source_id=source_id,
+            edge_type=edge_type, target_type=target_type, target_id=target_id,
+            claim_kind="fact", provenance="edges:add",
+            created_by="user", user_verified=1))
+    except EdgeValidationError as e:
+        raise SystemExit(_cli_error(f"edges add failed: {e}"))
+    say(f"added edge {edge.id}: {source_type}:{source_id}"
+        f" -{edge_type}-> {target_type}:{target_id}")
+
+
+def _cli_error(message: str) -> int:
+    print(message, file=sys.stderr)
+    return 1
+
+
+def cmd_edges_add(_args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        run_edges_add(conn, input, print)
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="open-career")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -297,6 +344,9 @@ def main(argv: list[str] | None = None) -> None:
     p_edges_list.add_argument("--untyped", action="store_true",
                               help="only migrated edges with 'unknown' endpoint types")
     p_edges_list.set_defaults(func=cmd_edges_list)
+    edges_sub.add_parser(
+        "add", help="add one user-verified edge interactively (vocabulary-guarded)"
+    ).set_defaults(func=cmd_edges_add)
 
     p_families = sub.add_parser("families", help="target role families and strategy allocations")
     families_sub = p_families.add_subparsers(dest="families_command", required=True)

@@ -77,6 +77,8 @@ stored career state; `open-career profile show` for the profile alone),
 `open-career profile set <field> <value>` (closed
 canonical field set, every write audited), `open-career edges list [--untyped]` (untyped =
 edges migrated from the 0001 schema, excluded from traversal until re-typed),
+`open-career edges add` (interactive, vocabulary-guarded; e.g. a SUPPORTS link so the
+family walk can reach evidence-backed facts),
 `open-career export <file.json>`, `open-career import <file.json>` (import fully replaces
 table contents; schema and format in `docs/data-model.md`). Instance location defaults to
 `./instance` (override with `OPEN_CAREER_INSTANCE`). Tests: `uv run pytest` (the suite

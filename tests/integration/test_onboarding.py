@@ -73,7 +73,7 @@ def test_onboarding_with_cv_confirm_edit_reject(instance, tmp_path):
         "reject",                         # fact 3: rejected
         "",                               # capabilities: none
         "",                               # goals: none
-        "", "", "",                       # profile basics skipped
+        "", "", "", "",                   # profile basics skipped
     ]
     conn = _conn(instance)
     try:
@@ -117,7 +117,7 @@ def test_rejected_experience_is_never_persisted_nor_its_facts(instance, tmp_path
         "confirm",    # fact 3 (no experience): confirmed
         "",           # capabilities: none
         "",           # goals: none
-        "", "", "",   # profile basics skipped
+        "", "", "", "",   # profile basics skipped
     ]
     conn = _conn(instance)
     try:
@@ -134,7 +134,7 @@ def test_rejected_experience_is_never_persisted_nor_its_facts(instance, tmp_path
 def test_two_cvs_with_the_same_basename_do_not_collide(instance, tmp_path):
     """Locators derive from evidence ids: a second upload named identically
     leaves the first file intact and every hash matching its own file."""
-    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", ""]
+    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", "", ""]
     conn = _conn(instance)
     try:
         for directory, content in (("a", "first CV body\n"), ("b", "second CV body\n")):
@@ -161,7 +161,7 @@ def test_onboarding_without_cv_degrades_to_questions(instance):
         "",                            # capabilities done
         "Ship a staff-level role", "mid",  # goal + horizon
         "",                            # goals done
-        "Jane Placeholder", "jane@example.com", "Milan",  # profile basics
+        "Jane Placeholder", "jane@example.com", "+351 900 000 000", "Milan",  # profile basics
     ]
     conn = _conn(instance)
     try:
@@ -186,7 +186,79 @@ def test_onboarding_without_cv_degrades_to_questions(instance):
         assert len(edges.active_edges_from("evidence", evidence[0].id, "PROVES")) == 1
 
         assert SqliteUserProfileRepository(conn).get_fields() == {
-            "full_name": "Jane Placeholder", "email": "jane@example.com", "location": "Milan"}
+            "full_name": "Jane Placeholder", "email": "jane@example.com",
+            "phone": "+351 900 000 000", "location": "Milan"}
+    finally:
+        conn.close()
+
+
+def test_capability_step_offers_linking_cv_evidence(instance, tmp_path):
+    """Graph-starvation regression (drive 2026-08-11): CV evidence PROVES the
+    confirmed facts, and the capability step offers to link it as SUPPORTS so
+    the family walk can reach experience-backed facts. One confirmation, no
+    model values (candidates derived in code)."""
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\nBackend Engineer at Acme 2021-2023\n")
+    answers = [
+        "confirm", "confirm", "confirm", "confirm",  # experience + 3 facts
+        "Backend service design", "strong",          # capability + strength
+        "y",                                         # link the CV evidence
+        "",                                          # capabilities done
+        "",                                          # goals: none
+        "", "", "", "",                              # profile basics skipped
+    ]
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                       ask=_scripted(answers), say=lambda _: None)
+        cv_evidence = [e for e in SqliteEvidenceRepository(conn).list_all()
+                       if e.evidence_type == "cv"][0]
+        capability = SqliteCapabilityRepository(conn).get_by_name("Backend service design")
+        supports = SqliteCareerEdgeRepository(conn).active_edges_to(
+            "capability", capability.id, "SUPPORTS")
+        by_source = {e.source_id: e for e in supports}
+        assert cv_evidence.id in by_source  # the CV evidence now supports it
+        edge = by_source[cv_evidence.id]
+        assert edge.created_by == "user" and edge.user_verified == 1
+        assert edge.claim_kind == "fact"
+        assert len(supports) == 2  # interview self-assessment plus the CV link
+    finally:
+        conn.close()
+
+
+def test_capability_step_link_declined_mints_nothing(instance, tmp_path):
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    answers = [
+        "confirm", "confirm", "confirm", "confirm",
+        "Backend service design", "strong",
+        "n",                                         # decline the link
+        "", "", "", "", "", "",
+    ]
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
+                       ask=_scripted(answers), say=lambda _: None)
+        cv_evidence = [e for e in SqliteEvidenceRepository(conn).list_all()
+                       if e.evidence_type == "cv"][0]
+        capability = SqliteCapabilityRepository(conn).get_by_name("Backend service design")
+        supports = SqliteCareerEdgeRepository(conn).active_edges_to(
+            "capability", capability.id, "SUPPORTS")
+        assert cv_evidence.id not in {e.source_id for e in supports}
+    finally:
+        conn.close()
+
+
+def test_onboarding_asks_for_phone(instance):
+    answers = [
+        "", "",                        # no capabilities, no goals
+        "Jane Placeholder", "jane@example.com", "+351 900 000 000", "Milan",
+    ]
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), model=None, cv_path=None,
+                       ask=_scripted(answers), say=lambda _: None)
+        assert SqliteUserProfileRepository(conn).get_fields()["phone"] == "+351 900 000 000"
     finally:
         conn.close()
 
@@ -213,7 +285,7 @@ def test_onboarding_with_pdf_cv_extracts_via_pdftotext(instance, tmp_path, monke
             seen_prompts.append(prompt)
             return EXTRACTION
 
-    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", ""]
+    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", "", ""]
     conn = _conn(instance)
     try:
         run_onboarding(conn, LocalStorageAdapter(instance), CapturingModel(), cv,
@@ -239,7 +311,7 @@ def test_cli_onboard_degrades_when_pdftotext_is_absent(tmp_path, monkeypatch, ca
         raise FileNotFoundError("pdftotext")
 
     monkeypatch.setattr("apps.cli.onboarding.subprocess.run", raising_run)
-    answers = iter(["", "", "", "", ""])
+    answers = iter(["", "", "", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     main(["onboard", str(cv)])  # must not raise SystemExit
@@ -274,7 +346,7 @@ def test_invalid_utf8_pdftotext_output_is_replaced_not_a_crash(instance, tmp_pat
             seen_prompts.append(prompt)
             return EXTRACTION
 
-    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", ""]
+    answers = ["confirm", "confirm", "confirm", "confirm", "", "", "", "", "", ""]
     conn = _conn(instance)
     try:
         run_onboarding(conn, LocalStorageAdapter(instance), CapturingModel(), cv,
@@ -301,7 +373,7 @@ def test_cli_onboard_degrades_when_pdftotext_output_is_undecodable(tmp_path, mon
         "apps.cli.onboarding.subprocess.run",
         lambda argv, capture_output=None: subprocess.CompletedProcess(
             argv, 0, stdout=Undecodable(), stderr=b""))
-    answers = iter(["", "", "", "", ""])
+    answers = iter(["", "", "", "", "", ""])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     main(["onboard", str(cv)])  # must not raise
@@ -339,6 +411,7 @@ def test_onboarding_ux_messages(instance, tmp_path):
         "",                              # goals: none
         "",                              # full_name skipped
         "not-an-email", "jane@example.com",  # email: rejected with reason, then valid
+        "",                              # phone skipped
         "",                              # location skipped
     ]
     says = []
@@ -402,7 +475,7 @@ def test_cli_onboard_degrades_when_model_call_fails(tmp_path, monkeypatch, capsy
     cv.write_text("Jane Placeholder\n")
     monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(instance))
     monkeypatch.setattr("adapters.models.claude_code.subprocess.run", fake_run)
-    answers = iter(["", "", "", "", ""])  # no capabilities, no goals, basics skipped
+    answers = iter(["", "", "", "", "", ""])  # no capabilities, no goals, basics skipped
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
 
     main(["onboard", str(cv)])  # must not raise SystemExit

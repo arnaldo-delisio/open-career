@@ -38,7 +38,7 @@ class CvReadError(RuntimeError):
 
 _STRENGTHS = ("none", "weak", "moderate", "strong")
 _HORIZONS = ("near", "mid", "long")
-_PROFILE_BASICS = ("full_name", "email", "location")
+_PROFILE_BASICS = ("full_name", "email", "phone", "location")
 
 
 def _now() -> str:
@@ -216,6 +216,43 @@ def _confirm_drafts(facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCa
         ))
 
 
+def _link_evidence_to_capability(evidence_repo: SqliteEvidenceRepository,
+                                 facts_repo: SqliteCareerFactRepository,
+                                 edges_repo: SqliteCareerEdgeRepository,
+                                 capability: Capability, exclude_evidence_id: str,
+                                 ask: Callable[[str], str],
+                                 say: Callable[[str], None]) -> None:
+    """Reachability for the family walk: candidates derived in code (no model
+    values, OC-5) as the existing evidence rows whose PROVES edges reach
+    confirmed active facts; each gets one confirmation minting a SUPPORTS
+    (evidence -> capability) edge, user-created and generation-eligible.
+    Without this, CV evidence proves facts no capability can reach."""
+    for evidence in evidence_repo.list_all():
+        if evidence.id == exclude_evidence_id:
+            continue  # the interview evidence already SUPPORTS this capability
+        proven = [
+            fact for edge in edges_repo.active_edges_from("evidence", evidence.id, "PROVES")
+            for fact in [facts_repo.get(edge.target_id)]
+            if fact is not None and fact.user_approved and fact.status == "active"
+        ]
+        if not proven:
+            continue
+        if any(e.target_id == capability.id
+               for e in edges_repo.active_edges_from("evidence", evidence.id, "SUPPORTS")):
+            continue
+        answer = ask(
+            f"Link evidence '{evidence.title}' ({len(proven)} confirmed facts)"
+            f" as supporting '{capability.name}'? (y/n) [y]: ").strip().lower()
+        if answer in ("", "y", "yes"):
+            edges_repo.add(CareerEdge(
+                id=new_id("edge"), source_type="evidence", source_id=evidence.id,
+                edge_type="SUPPORTS", target_type="capability", target_id=capability.id,
+                claim_kind="fact", provenance="onboarding:capability-evidence",
+                created_by="user", user_verified=1,
+            ))
+            say(f"  linked: {evidence.title} -SUPPORTS-> {capability.name}")
+
+
 def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceRepository,
                    facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCareerEdgeRepository,
                    ask: Callable[[str], str], say: Callable[[str], None]) -> None:
@@ -264,6 +301,9 @@ def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceReposi
             claim_kind="fact", provenance="onboarding:interview",
             created_by="user", user_verified=1,
         ))
+        _link_evidence_to_capability(
+            evidence_repo, facts_repo, edges_repo, capability,
+            exclude_evidence_id=evidence_row().id, ask=ask, say=say)
 
     say("\nGoals: where should this career go? (blank to finish)")
     goals_repo = SqliteCareerGoalRepository(conn)
