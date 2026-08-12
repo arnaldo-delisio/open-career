@@ -26,6 +26,13 @@ from adapters.storage.sqlite_entities import (
     SqliteExperienceRepository,
 )
 from domain.profile import InvalidProfileValueError, UnknownProfileFieldError
+from adapters.storage.family_strategy import StrategyError
+from adapters.storage.sqlite_entities import SqliteRoleFamilyRepository
+from apps.cli import families as families_cli
+from apps.cli import package_cmd
+from domain.cv_model import CvModelError
+from domain.family_proposal import FamilyProposalError
+from domain.packages import PackageStateError
 
 
 def _connect() -> sqlite3.Connection:
@@ -93,6 +100,76 @@ def cmd_onboard(args: argparse.Namespace) -> None:
     except ValueError as e:
         print(f"onboarding failed: {e}", file=sys.stderr)
         raise SystemExit(1)
+    else:
+        # Onboarding flows into the target-role-families step when no active
+        # family exists yet (design: families init entered automatically).
+        families = SqliteRoleFamilyRepository(conn).list_all()
+        has_state = any(
+            f.user_approved and f.status == "active"
+            for f in SqliteCareerFactRepository(conn).list_all())
+        if has_state and not any(f.status == "active" for f in families):
+            try:
+                families_cli.run_families_init(conn, ClaudeCodeAdapter(), input, print)
+            except _CLI_ERRORS as e:
+                print(f"families init skipped: {e}", file=sys.stderr)
+                print("Run `open-career families init` when ready.")
+    finally:
+        conn.close()
+
+
+_CLI_ERRORS = (StrategyError, FamilyProposalError, CvModelError, PackageStateError,
+               package_cmd.PackageCliError, ModelCallError, ModelUnavailableError)
+
+
+def _run_cli(label: str, fn) -> None:
+    try:
+        fn()
+    except _CLI_ERRORS as e:
+        print(f"{label} failed: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def cmd_families(args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        if args.families_command == "init":
+            _run_cli("families init", lambda: families_cli.run_families_init(
+                conn, ClaudeCodeAdapter(), input, print))
+        elif args.families_command == "list":
+            _run_cli("families list", lambda: families_cli.run_families_list(
+                conn, args.json, print))
+        elif args.families_command == "add":
+            _run_cli("families add", lambda: families_cli.run_families_add(
+                conn, input, print))
+        elif args.families_command == "edit":
+            _run_cli("families edit", lambda: families_cli.run_families_edit(
+                conn, args.family, input, print))
+        elif args.families_command == "pause":
+            _run_cli("families pause", lambda: families_cli.run_families_pause(
+                conn, args.family, print))
+    finally:
+        conn.close()
+
+
+def cmd_package(args: argparse.Namespace) -> None:
+    conn = _connect()
+    storage = LocalStorageAdapter(instance_dir())
+    try:
+        if args.package_command == "generate":
+            _run_cli("package generate", lambda: package_cmd.run_generate(
+                conn, storage, ClaudeCodeAdapter(), args.family, args.pages, print))
+        elif args.package_command == "show":
+            _run_cli("package show", lambda: package_cmd.run_show(
+                conn, args.id, args.json, print))
+        elif args.package_command == "review":
+            _run_cli("package review", lambda: package_cmd.run_review(
+                conn, storage, ClaudeCodeAdapter(), args.id, args.pages, input, print))
+        elif args.package_command == "export":
+            _run_cli("package export", lambda: package_cmd.run_export(
+                conn, storage, args.id, Path(args.out), print))
+        elif args.package_command == "recover":
+            _run_cli("package recover", lambda: package_cmd.run_recover(
+                conn, storage, print))
     finally:
         conn.close()
 
@@ -220,6 +297,47 @@ def main(argv: list[str] | None = None) -> None:
     p_edges_list.add_argument("--untyped", action="store_true",
                               help="only migrated edges with 'unknown' endpoint types")
     p_edges_list.set_defaults(func=cmd_edges_list)
+
+    p_families = sub.add_parser("families", help="target role families and strategy allocations")
+    families_sub = p_families.add_subparsers(dest="families_command", required=True)
+    families_sub.add_parser("init", help="model proposes families; you confirm; mints"
+                            " strategy version 1").set_defaults(func=cmd_families)
+    p_families_list = families_sub.add_parser("list", help="families with current allocations")
+    p_families_list.add_argument("--json", action="store_true")
+    p_families_list.set_defaults(func=cmd_families)
+    families_sub.add_parser("add", help="add a family (mints a new strategy version)"
+                            ).set_defaults(func=cmd_families)
+    p_families_edit = families_sub.add_parser("edit", help="edit emphasis / targets")
+    p_families_edit.add_argument("family", help="family id or name")
+    p_families_edit.set_defaults(func=cmd_families)
+    p_families_pause = families_sub.add_parser("pause", help="pause a family")
+    p_families_pause.add_argument("family", help="family id or name")
+    p_families_pause.set_defaults(func=cmd_families)
+
+    p_package = sub.add_parser("package", help="per-family CV packages (OC-33)")
+    package_sub = p_package.add_subparsers(dest="package_command", required=True)
+    p_pkg_gen = package_sub.add_parser(
+        "generate", help="walk, generate, verify, render, ATS-check")
+    p_pkg_gen.add_argument("family", help="family id or name")
+    p_pkg_gen.add_argument("--pages", type=int, default=1,
+                           help="page budget (default 1, hard max 2)")
+    p_pkg_gen.set_defaults(func=cmd_package)
+    p_pkg_show = package_sub.add_parser("show", help="content, traces, reports, gaps")
+    p_pkg_show.add_argument("id", help="version id, package id, or family")
+    p_pkg_show.add_argument("--json", action="store_true")
+    p_pkg_show.set_defaults(func=cmd_package)
+    p_pkg_review = package_sub.add_parser(
+        "review", help="accept, or edit -> write-back loop -> regenerate")
+    p_pkg_review.add_argument("id", help="version id")
+    p_pkg_review.add_argument("--pages", type=int, default=1)
+    p_pkg_review.set_defaults(func=cmd_package)
+    p_pkg_export = package_sub.add_parser(
+        "export", help="copy the PDF out of instance/ (defaults to the approved version)")
+    p_pkg_export.add_argument("id", help="version id, package id, or family")
+    p_pkg_export.add_argument("--out", required=True, help="output PDF path")
+    p_pkg_export.set_defaults(func=cmd_package)
+    package_sub.add_parser("recover", help="claim expired generation leases, list orphans"
+                           ).set_defaults(func=cmd_package)
 
     p_export = sub.add_parser("export", help="dump the instance database to JSON")
     p_export.add_argument("file", help="output JSON file")
