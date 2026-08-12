@@ -383,7 +383,9 @@ def main(argv: list[str] | None = None) -> None:
     p_pkg_review.set_defaults(func=cmd_package)
     p_pkg_export = package_sub.add_parser(
         "export", help="copy the PDF out of instance/ (defaults to the approved version)")
-    p_pkg_export.add_argument("id", help="version id, package id, or family")
+    p_pkg_export.add_argument("id", nargs="?", default=None,
+                              help="version id, package id, or family (omit to export"
+                                   " the approved version of the only package)")
     p_pkg_export.add_argument("--out", required=True, help="output PDF path")
     p_pkg_export.set_defaults(func=cmd_package)
     package_sub.add_parser("recover", help="claim expired generation leases, list orphans"

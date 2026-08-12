@@ -380,18 +380,24 @@ def run_export(conn: sqlite3.Connection, storage: StorageAdapter, ref: str | Non
     newest. Revalidates stored bytes against the recorded hash."""
     repo = SqlitePackageRepository(conn)
     version = repo.get_version(ref) if ref else None
-    if version is None and ref:
-        package = repo.get_package(ref)
-        if package is None:
-            family = resolve_family(conn, ref)
-            package = repo.get_base_package_for_family(family.id) if family else None
-        if package is None:
-            raise PackageCliError(f"nothing found for '{ref}'")
+    if version is None:
+        if ref:
+            package = repo.get_package(ref)
+            if package is None:
+                family = resolve_family(conn, ref)
+                package = repo.get_base_package_for_family(family.id) if family else None
+            if package is None:
+                raise PackageCliError(f"nothing found for '{ref}'")
+        else:
+            rows = conn.execute("SELECT id FROM packages ORDER BY id").fetchall()
+            if len(rows) != 1:
+                raise PackageCliError(
+                    "no packages exist; run package generate" if not rows else
+                    "several packages exist; name a version id, package id, or family")
+            package = repo.get_package(rows[0][0])
         if package.approved_version_id is None:
             raise PackageCliError("no approved version to export (run package review)")
         version = _version_or_die(repo, package.approved_version_id)
-    if version is None:
-        raise PackageCliError("export needs a version id, package id, or family")
     if version.status not in (VERIFIED, APPROVED):
         raise PackageCliError(f"version is {version.status}; nothing exportable")
     if not version.artifact_locator or not version.artifact_hash:

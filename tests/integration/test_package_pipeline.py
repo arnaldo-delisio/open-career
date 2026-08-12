@@ -430,3 +430,40 @@ def test_review_edit_stamps_the_current_strategy_version(env):
     assert len(versions) == 2 and versions[-1].status == VERIFIED
     meta = json.loads(versions[-1].content_model_json)["meta"]
     assert meta["strategy_version"] == 2
+
+
+def test_null_end_date_renders_blank_never_present(env):
+    """A null canonical end date is absence of a value, not a
+    current-employment claim: the extracted PDF text carries no 'Present' or
+    other status text the confirmed row does not state."""
+    from adapters.render.pdftext import PopplerPdfTextExtractor
+
+    conn, storage = env
+    with conn:
+        conn.execute("UPDATE experiences SET end_date = NULL WHERE id = 'exp_1'")
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    assert result.status == VERIFIED
+    version = SqlitePackageRepository(conn).get_version(result.version_id)
+    text = PopplerPdfTextExtractor().extract_layout(
+        storage.read_bytes(version.artifact_locator))
+    assert "present" not in text.lower()
+    assert "current" not in text.lower() and "ongoing" not in text.lower()
+    assert "2022-03" in text  # the confirmed start date still renders
+
+
+def test_cli_export_defaults_to_the_approved_version(env, tmp_path, monkeypatch):
+    from apps.cli.main import main as cli_main
+
+    conn, storage = env
+    monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(tmp_path / "instance"))
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    # No id and nothing approved yet: refuse with the repair path named.
+    with pytest.raises(package_cmd.PackageCliError, match="no approved version"):
+        package_cmd.run_export(conn, storage, None, tmp_path / "cv.pdf", lambda _s: None)
+    SqlitePackageRepository(conn).approve(result.version_id, "2026-08-12T00:00:00Z")
+    conn.commit()
+    out = tmp_path / "exported" / "cv.pdf"
+    cli_main(["package", "export", "--out", str(out)])  # id omitted
+    assert out.read_bytes().startswith(b"%PDF")

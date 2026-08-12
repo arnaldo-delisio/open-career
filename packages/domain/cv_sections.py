@@ -38,7 +38,10 @@ _HEADINGS = {
 
 def _entry_blocks(entry: CvExperienceEntry) -> tuple[Block, ...]:
     head = entry.title if not entry.org else f"{entry.title}, {entry.org}"
-    dates = f"{entry.start_date or ''} - {entry.end_date or 'Present'}".strip(" -")
+    # A null canonical end date renders blank: "Present" would be a
+    # current-employment value claim absent from the confirmed row, and value
+    # claims come only from canonical state, never from the renderer.
+    dates = f"{entry.start_date or ''} - {entry.end_date or ''}".strip(" -")
     blocks = [Block("head", (head,))]
     if dates:
         blocks.append(Block("line", (dates,)))
