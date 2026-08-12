@@ -10,20 +10,23 @@ scope ledger at `../DECISIONS.md`; this repo carries only code.
 ```
 apps/
   api/          FastAPI app (health endpoint, repository wiring)
-  cli/          open-career CLI: init, migrate, onboard, profile, edges, export, import
+  cli/          open-career CLI: init, migrate, onboard, families, package, profile,
+                edges, export, import
   extension/    placeholder (all backend calls route through one service-worker module)
 packages/
-  domain/       entities, ports, and domain services (traversal, extraction validation,
-                profile field set); no framework or storage imports
+  domain/       entities, ports, and domain services (traversal, selection, CV content
+                model, grounding verifier, generation pipeline, ATS check, profile field
+                set); no framework or storage imports
   schemas/      canonical field schema (planned)
   prompts/      prompt assets (CV extraction)
 adapters/
   storage/      SQLite repositories, migration runner, local-filesystem StorageAdapter
   models/       ModelAdapter implementations (headless Claude Code)
+  render/       Playwright Chromium PDF renderer, pdftotext extraction
   sources/ browser/   planned
 workers/        discovery and agent workers (planned)
 migrations/     numbered SQL migrations, applied in order
-templates/      document templates (planned)
+templates/      CV templates (single-column ATS-safe HTML; zero personal data)
 scripts/        manual checks (live model smoke), never part of the test suite
 tests/          unit, integration, gauntlet, browser, fixtures (captured ATS form corpus)
 docs/           notes (data model, dependency justifications)
@@ -54,6 +57,20 @@ API key; the model proposes structure only and every draft is confirmed, edited,
 rejected interactively), then asks the gap questions (capabilities, goals, profile
 basics). Without a CV it runs the same questions from a blank slate. Nothing the model
 drafts is usable for generation until approved.
+
+Package generation (spec: the scope's `decisions/package-generation-design.md`, OC-33/
+OC-34): `open-career families init` proposes target role families from approved state
+(model proposes structure only; you confirm; a 1-to-5 emphasis and a stated objective mint
+an approved strategy version, and every later allocation-affecting change mints a complete
+new version), then `open-career package generate <family>` walks the evidence graph
+(TARGETS to capability to SUPPORTS to evidence to PROVES to approved facts), drafts a
+typed CV content model, verifies it with the deterministic grounding verifier (every
+number, date, entity, and content word must trace to approved state), renders a
+single-column ATS-safe PDF via headless Chromium, and runs the mandatory `pdftotext`
+section-equivalence check. `package review <version>` accepts (approves) or edits with the
+write-back loop: an ungrounded edit either mints the underlying fact and regenerates, or
+is dropped. `package show <id>`, `package export <id> --out cv.pdf` (defaults to the
+approved version, hash-validated), `package recover` (claims expired generation leases).
 
 Other commands: `open-career migrate`, `open-career show` (human-readable dump of the
 stored career state; `open-career profile show` for the profile alone),

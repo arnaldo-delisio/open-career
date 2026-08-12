@@ -30,7 +30,7 @@ created_by (user|import|matcher), user_verified, created_at, superseded_at NULL`
 
 Edges retire by `superseded_at`, never delete. A partial unique index allows one active
 edge per logical tuple; the edge vocabulary (PROVES, SUPPORTS, DEMONSTRATES, REQUIRES,
-PRIORITIZES) lives in `packages/domain/edges.py` and is enforced by the repository, not a
+PRIORITIZES, TARGETS) lives in `packages/domain/edges.py` and is enforced by the repository, not a
 CHECK, so later phases extend it without a migration. An edge is generation-eligible only
 if `user_verified = 1`, or `created_by IN ('user', 'import')` with `claim_kind = 'fact'`;
 matcher-created unverified edges are proposals and are never traversed for generation.
@@ -39,6 +39,24 @@ Rows migrated from 0001 carry `'unknown'` endpoint types (their ids were untyped
 `'edge_' || old id`, the old `source` column as `provenance`, and `created_by = 'import'`.
 They are excluded from traversal until re-typed; `open-career edges list --untyped`
 surfaces them.
+
+## Package tables (migration 0003)
+
+Spec: the scope's `decisions/package-generation-design.md` (OC-33). `packages` holds one
+base package per role family (partial unique index on `role_family_id` where
+`opportunity_id IS NULL`; `opportunity_id` is the discovery seam); `approved_version_id`
+points only to an APPROVED version and is the only notion of "current".
+`package_versions` carries the lifecycle on the version: `status` is a plain TEXT column
+(later phases add states additively), the immutable audit bundle
+(`content_model_json`, `context_snapshot_locator` + `input_context_hash`,
+`verifier_report_json`, `ats_report_json`, `artifact_locator` + `artifact_hash`),
+`failure_report_json` (always required for FAILED), `gauntlet_report_json` (the unwritten
+Gauntlet seam), and the generation lease (`lease_owner`, `lease_generation`,
+`lease_expires_at`). The state-transition table (GENERATING to VERIFIED or FAILED,
+VERIFIED to APPROVED), the status-dependent required fields, and write-once finalized
+bundle fields are enforced at `adapters/storage/sqlite_packages.py`, never by convention.
+Snapshot and artifact objects live under `instance/packages/<pkg>/v<N>/g<lease-gen>/`,
+written once, never overwritten.
 
 ## Export/import
 
