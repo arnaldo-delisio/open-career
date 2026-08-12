@@ -99,6 +99,21 @@ def test_verbatim_model_renders_factless_education_skeleton_only():
     assert report.passed, report.to_json()
 
 
+def test_model_draft_omitting_factless_education_is_corrected():
+    """Successful model path: a draft that omits a confirmed factless
+    education row fails verification with the coverage rule named, and the
+    corrected retry carries the row."""
+    context = make_context(experiences=(EXP, EXP2, EDU))
+    incomplete = make_cv()  # exp_1 only, no education section
+    complete, _dropped = build_verbatim_model(context, "2026-08-11T00:00:00Z")
+    model = FakeModel([incomplete.to_json(), complete.to_json()])
+    result = CvDraftingService(model, "PROMPT {context_json}").draft(
+        context, "2026-08-11T00:00:00Z")
+    assert result.report.passed and result.attempts == 2 and not result.fallback_used
+    assert "coverage" in model.prompts[1]
+    assert [e.experience_id for e in result.cv.education] == ["exp_edu"]
+
+
 def test_prompt_contains_context_snapshot():
     context = make_context()
     model = FakeModel([make_cv().to_json()])

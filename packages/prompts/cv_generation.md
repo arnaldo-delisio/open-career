@@ -29,7 +29,10 @@ Rules:
 - experiences/projects/education: reverse chronological from the view's
   experiences (kind project -> projects, education -> education, everything
   else -> experiences). Copy title, org, start_date, end_date exactly from the
-  experience row. Include an entry only if at least one fact attaches to it.
+  experience row. Employment entries (the experiences section) appear only if
+  at least one fact attaches. EVERY education and project row in the view must
+  appear in its section; when no fact attaches, render it skeleton-only
+  (title, org, dates, empty bullets list).
 - bullets: phrase from the facts (action, what, context, outcome; first-person
   ownership framing without pronouns). Every bullet carries the fact_ids it
   renders; every fact must attach to that same experience. Use only content

@@ -108,6 +108,7 @@ class GroundingVerifier:
                                  ("projects", cv.projects), ("education", cv.education)):
             for entry in entries:
                 findings.extend(self._check_entry(section, entry))
+        findings.extend(self._check_completeness(cv))
         findings.extend(self._check_experience_order(cv))
         return GroundingReport(spec_version=SPEC_VERSION, findings=tuple(findings))
 
@@ -279,6 +280,22 @@ class GroundingVerifier:
                 f"content words not in the bullet's sources: {sorted(missing)}"))
         # Rule 4: scope inflation, against the fact statements only.
         findings.extend(self._check_scope(element, bullet.text, source_text))
+        return findings
+
+    def _check_completeness(self, cv: CvModel) -> list[Finding]:
+        """Every confirmed education/project row in the context must render
+        (skeleton-only when factless): a CV omitting confirmed education is a
+        wrong artifact, not a safe one."""
+        findings = []
+        present = {"projects": {e.experience_id for e in cv.projects},
+                   "education": {e.experience_id for e in cv.education}}
+        for experience_id, row in sorted(self._view["experiences"].items()):
+            section = {"project": "projects", "education": "education"}.get(row["kind"])
+            if section and experience_id not in present[section]:
+                findings.append(Finding(
+                    "coverage", section,
+                    f"confirmed {row['kind']} row '{experience_id}' must render"
+                    " in this section (skeleton-only when factless)"))
         return findings
 
     def _check_experience_order(self, cv: CvModel) -> list[Finding]:

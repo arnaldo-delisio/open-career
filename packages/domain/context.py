@@ -118,7 +118,10 @@ class GenerationContext:
 
 
 def _experience_dict(e: Experience) -> dict:
+    """The row's skeleton columns only. The extracted summary is model prose
+    that was never displayed or confirmed: it is not a grounding source and
+    never renders (claim-bearing prose must be represented by approved facts)."""
     return {
         "kind": e.kind, "title": e.title, "org": e.org,
-        "start_date": e.start_date, "end_date": e.end_date, "summary": e.summary,
+        "start_date": e.start_date, "end_date": e.end_date,
     }

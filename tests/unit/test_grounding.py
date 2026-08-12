@@ -295,6 +295,41 @@ def test_skeleton_only_education_entry_is_legal():
     assert report.passed, report.to_json()
 
 
+def test_experience_summary_is_not_a_grounding_source():
+    """The extracted experience summary was never displayed or confirmed:
+    its words ground nothing, in a bullet or in the CV summary."""
+    exp = Experience(id="exp_1", kind="role", title=EXP.title, org=EXP.org,
+                     start_date=EXP.start_date, end_date=EXP.end_date,
+                     summary="Wrangled prize llamas at scale")
+    context = make_context(experiences=(exp, EXP2))
+    bullet = verify(make_cv(bullets=(Bullet(
+        text="Reduced onboarding time by 40% for llamas", fact_ids=("fact_1",)),)),
+        context)
+    assert "content-words" in rules(bullet)
+    summary = verify(make_cv(summary="Automating llamas deployment pipelines"), context)
+    assert "content-words" in rules(summary)
+
+
+def test_word_form_signs_ground_against_signed_facts():
+    """'minus 10%' and 'negative 10%' are the signed number, not ungrounded
+    content words."""
+    fact = CareerFact(id="fact_n", fact_type="achievement",
+                      statement="Margin moved -10% during the pipeline migration",
+                      source="interview", user_approved=1, experience_id="exp_1")
+    context = make_context(facts=(fact,))
+    for wording in ("minus", "negative"):
+        report = verify(make_cv(bullets=(Bullet(
+            text=f"Margin moved {wording} 10% during the pipeline migration",
+            fact_ids=("fact_n",)),)), context)
+        assert report.passed, (wording, report.to_json())
+
+
+def test_omitted_confirmed_education_row_fails_coverage():
+    context = make_context(experiences=(EXP, EXP2, EDU))
+    report = verify(make_cv(), context)  # no education section at all
+    assert "coverage" in rules(report)
+
+
 def test_out_of_order_experiences_fail():
     context = make_context()
     older = _entry(EXP2, bullets=(Bullet(

@@ -15,7 +15,7 @@ and acronyms."""
 import re
 import unicodedata
 
-SPEC_VERSION = "2"
+SPEC_VERSION = "3"
 
 # Pre-render and pre-compare character normalization (the mojibake-in-sent-
 # letters incident class): em/en dashes, smart quotes, zero-width, NBSP.
@@ -152,9 +152,14 @@ def lemma_set(text: str) -> set[str]:
 
 
 def content_lemmas(text: str) -> set[str]:
-    """Non-function-word lemmas, excluding pure numerics (rule 1 owns those)."""
+    """Non-function-word lemmas, excluding pure numerics (rule 1 owns those).
+    Word-form signs attached to a numeric span ("minus 10%") canonicalize to
+    the sign first, so they are numeric material, not content words; a bare
+    "minus" with no number stays a content word."""
+    canonical = _NUMBER_WORD_RE.sub(lambda m: _NUMBER_WORDS[m.group(0)], normalize(text))
+    canonical = _SIGN_WORDS.sub("-", canonical)
     result = set()
-    for token in tokenize(text):
+    for token in tokenize(canonical):
         if token in FUNCTION_WORDS:
             continue
         base = lemma(token)

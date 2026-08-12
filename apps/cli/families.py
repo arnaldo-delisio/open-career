@@ -189,7 +189,7 @@ def run_families_add(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
         name = ask("Family name: ").strip()
         if not name:
             say("aborted (empty name); nothing persisted")
-            return
+            raise SystemExit(1)
         if any(f.name.lower() == name.lower()
                for f in SqliteRoleFamilyRepository(conn).list_all()):
             say(f"a family named '{name}' already exists; nothing persisted")

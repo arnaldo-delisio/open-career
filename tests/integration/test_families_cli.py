@@ -163,3 +163,11 @@ def test_add_duplicate_name_reports_cleanly(conn):
     assert excinfo.value.code == 1
     assert any("already exists" in s for s in said)
     assert len(SqliteRoleFamilyRepository(conn).list_all()) == 1
+
+
+def test_add_empty_name_aborts_nonzero(conn):
+    said = []
+    with pytest.raises(SystemExit) as excinfo:
+        run_families_add(conn, _script([""]), said.append)
+    assert excinfo.value.code == 1
+    assert any("empty name" in s for s in said)
