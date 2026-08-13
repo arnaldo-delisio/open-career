@@ -55,13 +55,23 @@ uv run uvicorn apps.api.main:app   # then: curl localhost:8000/health
 
 Onboarding is CV-first: `open-career onboard [cv.txt]` stores the CV, extracts draft
 experiences and facts through headless Claude Code (`claude -p`, subscription-backed, no
-API key; the model proposes structure only and every draft is confirmed, edited, or
-rejected interactively), asks the gap questions (capabilities, goals, profile basics),
-flows into the role-families step, then asks the must-ask block (work authorization,
-location/remote/relocation, notice period, compensation floor and target). Without a CV
-it runs the same questions from a blank slate. Nothing the model drafts is usable for
-generation until approved, and confirming an unquantified fact offers one optional
-follow-up for an honest number (a user edit; the system never suggests one).
+API key; the model proposes structure only), then renders one review surface listing
+every extracted experience and draft fact with a stable index. Each item carries its own
+mark (`1a` accept, `2r` reject, `3e` edit, ranges like `2-6a`), several per line; there is
+no approve-the-remainder default, so the review ends only when every item is marked, and
+rejecting an experience rejects its dependent facts visibly in the same surface (spec: the
+scope's `decisions/onboarding-ux-redesign.md`, OC-39). Experiences are marked first,
+because a rejected one takes its facts with it; the facts are then marked. Fact decisions
+are durable per mark, so an interrupted review resumes over exactly the facts that never
+got one; experience decisions become durable when the experience phase completes, so an
+interrupt inside that phase asks the experiences again and the surface says so. After the review, each experience
+whose confirmed facts carry no numbers gets one ask where any of them can be restated by
+index (a user edit; the system never suggests a number), with facts belonging to no
+experience gathered into a final group. Onboarding then asks the gap questions
+(capabilities, goals, profile basics), flows into the role-families step, and asks the
+must-ask block (work authorization, location/remote/relocation, notice period,
+compensation floor and target). Without a CV it runs the same questions from a blank
+slate. Nothing the model drafts is usable for generation until approved.
 
 The interview continues whenever it earns its time (spec: the scope's
 `decisions/onboarding-interview-design.md`, OC-35): `open-career deepen` walks the
@@ -84,7 +94,8 @@ session at a time; persistence is per item, so a stopped or crashed session lose
 nothing already persisted. Multi-prompt units (the family setup step inside onboard,
 an in-progress story inside stories) persist when the unit completes; a unit cut short
 is simply asked again on the next run, since resume state is computed from the data. Re-running `onboard` with the same CV file resumes from the data
-itself (pending drafts are re-walked, extraction never re-runs; never a stored cursor).
+itself (the review renders whatever is still unmarked, extraction never re-runs; never a
+stored cursor).
 
 Package generation (spec: the scope's `decisions/package-generation-design.md`, OC-33/
 OC-34): `open-career families init` proposes target role families from approved state

@@ -217,6 +217,68 @@ def test_migration_with_end_is_rejected_and_applies_nothing(tmp_path):
         conn.close()
 
 
+def test_migration_with_txn_words_in_line_comment_applies(tmp_path):
+    """A comment merely mentioning 'commit' or 'begin transaction' is prose, not SQL,
+    and must not trip the transaction-control guard."""
+    db = tmp_path / "test.sqlite3"
+    mdir = tmp_path / "migrations"
+    mdir.mkdir()
+    (mdir / "0001_a.sql").write_text(
+        "-- foreign keys are deferred to commit, by which point rows exist\n"
+        "CREATE TABLE t1 (id INTEGER);"
+    )
+    (mdir / "0002_b.sql").write_text(
+        "-- see begin transaction semantics in sqlite docs for why this is safe\n"
+        "CREATE TABLE t2 (id INTEGER);"
+    )
+    assert migrate(db, migrations_dir=mdir, backups_dir=tmp_path / "backups") == ["0001", "0002"]
+
+
+def test_migration_with_real_commit_in_body_still_rejected(tmp_path):
+    """The guard's actual purpose stays intact: real transaction control in the SQL
+    body (not just a comment mentioning it) is still rejected."""
+    db = tmp_path / "test.sqlite3"
+    mdir = tmp_path / "migrations"
+    mdir.mkdir()
+    (mdir / "0001_a.sql").write_text(
+        "-- deferred to commit, see above\n"
+        "CREATE TABLE t1 (id INTEGER);\n"
+        "COMMIT;\n"
+    )
+    with pytest.raises(ValueError, match="transaction control"):
+        migrate(db, migrations_dir=mdir, backups_dir=tmp_path / "backups")
+
+
+def test_double_dash_inside_string_literal_is_not_a_comment(tmp_path):
+    """A '--' inside quoted data is data, not a comment marker, and must not be
+    stripped (which would otherwise truncate the statement)."""
+    db = tmp_path / "test.sqlite3"
+    mdir = tmp_path / "migrations"
+    mdir.mkdir()
+    (mdir / "0001_a.sql").write_text(
+        "CREATE TABLE t1 (id INTEGER PRIMARY KEY, label TEXT);\n"
+        "INSERT INTO t1 (id, label) VALUES (1, 'a -- not a comment, still data');\n"
+    )
+    migrate(db, migrations_dir=mdir, backups_dir=tmp_path / "backups")
+    conn = sqlite3.connect(db)
+    try:
+        row = conn.execute("SELECT label FROM t1 WHERE id = 1").fetchone()
+        assert row == ("a -- not a comment, still data",)
+    finally:
+        conn.close()
+
+
+def test_block_comment_with_txn_words_applies(tmp_path):
+    db = tmp_path / "test.sqlite3"
+    mdir = tmp_path / "migrations"
+    mdir.mkdir()
+    (mdir / "0001_a.sql").write_text(
+        "/* rollback here means the caller's retry, not sqlite ROLLBACK */\n"
+        "CREATE TABLE t1 (id INTEGER);"
+    )
+    assert migrate(db, migrations_dir=mdir, backups_dir=tmp_path / "backups") == ["0001"]
+
+
 def test_duplicate_migration_versions_rejected_before_any_write(tmp_path):
     db = tmp_path / "test.sqlite3"
     mdir = tmp_path / "migrations"

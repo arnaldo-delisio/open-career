@@ -16,6 +16,30 @@ _PACKAGED_MIGRATIONS = Path(__file__).resolve().parent / "_migrations"
 # Migration files may not carry their own transaction control: the runner owns it.
 _TXN_CONTROL = re.compile(r"\b(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b", re.IGNORECASE)
 
+# Matches, in order of first alternative that fits: a single- or double-quoted string
+# literal (kept verbatim, including any '--' or '/*' inside it), a line comment, or a
+# block comment. Applied left to right so quoting always wins over comment markers.
+_SQL_COMMENT_OR_STRING = re.compile(
+    r"'(?:[^']|'')*'"       # single-quoted string, with '' as an escaped quote
+    r'|"(?:[^"]|"")*"'      # double-quoted identifier/string, same escaping
+    r"|--[^\n]*"            # line comment to end of line
+    r"|/\*.*?\*/",          # block comment, non-greedy
+    re.DOTALL,
+)
+
+
+def _strip_sql_comments(sql: str) -> str:
+    """Remove line and block comments while leaving string literals untouched, so a
+    comment mentioning transaction words (or a stray '--' inside quoted data) never
+    reads as SQL to the transaction-control guard."""
+    def replace(match: re.Match) -> str:
+        text = match.group(0)
+        if text.startswith("--") or text.startswith("/*"):
+            return ""
+        return text
+
+    return _SQL_COMMENT_OR_STRING.sub(replace, sql)
+
 
 def _resolve_migrations_dir(repo_candidate: Path = _REPO_ROOT_MIGRATIONS,
                             packaged_candidate: Path = _PACKAGED_MIGRATIONS) -> Path:
@@ -82,7 +106,7 @@ def _apply_one(conn: sqlite3.Connection, migration: Path) -> str:
     if not version.isdigit():
         raise ValueError(f"migration file name must start with a numeric version: {migration.name}")
     body = migration.read_text()
-    if _TXN_CONTROL.search(body):
+    if _TXN_CONTROL.search(_strip_sql_comments(body)):
         raise ValueError(
             f"migration {migration.name} contains its own transaction control; the runner owns transactions"
         )

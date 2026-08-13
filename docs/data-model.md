@@ -157,6 +157,23 @@ must gain credential mediation or be replaced by a non-agentic completion endpoi
 shipping discovery-fed judges over the current adapter would hand injected text a
 readable token and a network.
 
+## CV review completion (migration 0008)
+
+Adds `evidence.review_completed_at` (nullable timestamp): the CV review surface records
+here that it completed, whatever the marks were (OC-39). The resume branch consults it
+first, because a review that rejected every item leaves no surviving draft fact and would
+otherwise be indistinguishable from an extraction whose drafts never landed, which would
+re-extract and re-ask a CV the user has already been through. NULL means the row predates
+the column, and the older attributed-facts reasoning (including the single-cv-row NULL
+provenance path) decides as before.
+
+There is deliberately no backfill, because completion cannot be reconstructed from
+pre-0008 data: **a pre-0008 CV whose review produced no surviving facts is re-extracted
+and asked again**, since for that data a completed all-reject review is indistinguishable
+from one interrupted before its drafts landed. The fallback is conservative on purpose, it
+costs a second pass and can never skip a review that never happened. Rows reviewed from
+0008 onward carry the stamp and are never re-asked.
+
 ## Export/import
 
 `open-career export <file.json>` dumps `{"format": "open-career-export", "version": 1,

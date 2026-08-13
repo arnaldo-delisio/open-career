@@ -79,6 +79,9 @@ class Evidence:
     content_hash: str | None = None
     notes: str | None = None
     created_at: str | None = None
+    # Set when this evidence's review surface completed (migration 0008); NULL
+    # on rows that predate it, and on evidence that carries no review.
+    review_completed_at: str | None = None
 
 
 @dataclass(frozen=True)

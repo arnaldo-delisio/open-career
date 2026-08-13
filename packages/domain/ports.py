@@ -78,6 +78,10 @@ class EvidenceRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[Evidence]: ...
 
+    @abstractmethod
+    def mark_review_completed(self, evidence_id: str, completed_at: str) -> None:
+        """Record that this evidence's review surface completed (OC-39)."""
+
 
 class CapabilityRepository(ABC):
     @abstractmethod

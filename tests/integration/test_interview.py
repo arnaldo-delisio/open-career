@@ -157,10 +157,11 @@ def test_yes_no_prompt_reprompts_on_garbage_and_consumes_nothing():
     assert next(answers, "exhausted") == "exhausted"  # both answers consumed by the prompt
 
 
-def test_inline_backfill_in_the_cv_fact_walk_is_a_user_edit(tmp_path):
-    """Confirming an unquantified fact offers one follow-up; the restatement is
-    a user edit, approved. A skipped follow-up changes nothing (spec: metric
-    backfill; the system never proposes a number)."""
+def test_backfill_after_the_cv_review_is_a_user_edit(tmp_path):
+    """The reviewed facts with no number get one group ask; the restatement is
+    a user edit, approved, and a quantified fact is never listed (spec: metric
+    backfill, layer 1 asked once per experience; the system never proposes a
+    number)."""
     import json
 
     from domain.ports import ModelAdapter
@@ -183,8 +184,8 @@ def test_inline_backfill_in_the_cv_fact_walk_is_a_user_edit(tmp_path):
     cv.write_text("Jane Placeholder\n")
     prompts = []
     answers = [
-        "confirm", "Led a team of 6",  # unquantified: follow-up, restated
-        "confirm",                     # quantified: no follow-up asked
+        "1a 2a",                       # both facts accepted
+        "1: Led a team of 6", "",      # only the unquantified one is listed
         "", "", "", "", "", "",        # capabilities, goals, basics
     ]
     remaining = list(answers)
@@ -200,7 +201,11 @@ def test_inline_backfill_in_the_cv_fact_walk_is_a_user_edit(tmp_path):
         statements = {f.statement for f in SqliteCareerFactRepository(conn).list_all()}
         assert "Led a team of 6" in statements
         assert "Shipped 3 services" in statements
-        assert sum("No number in that fact" in p for p in prompts) == 1
+        # One group ask (the no-experience group), and the already-quantified
+        # fact was never part of it.
+        restate = [p for p in prompts if p.startswith("Restate one as")]
+        assert len(restate) == 2  # the restatement, then the blank that moves on
+        assert not any("No number in that fact" in p for p in prompts)
     finally:
         conn.close()
 

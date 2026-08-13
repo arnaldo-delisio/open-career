@@ -93,7 +93,7 @@ class SqliteCareerFactRepository(CareerFactRepository):
 
 class SqliteEvidenceRepository(EvidenceRepository):
     _SELECT = ("SELECT id, evidence_type, title, locator, content_hash, notes,"
-               " created_at FROM evidence")
+               " created_at, review_completed_at FROM evidence")
 
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
@@ -113,6 +113,12 @@ class SqliteEvidenceRepository(EvidenceRepository):
 
     def list_all(self) -> list[Evidence]:
         return [Evidence(*r) for r in self._conn.execute(f"{self._SELECT} ORDER BY id")]
+
+    def mark_review_completed(self, evidence_id: str, completed_at: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "UPDATE evidence SET review_completed_at = ? WHERE id = ?",
+                (completed_at, evidence_id))
 
 
 class SqliteCapabilityRepository(CapabilityRepository):
