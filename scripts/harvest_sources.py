@@ -51,7 +51,14 @@ URL_PATTERNS: dict[str, tuple[str, re.Pattern]] = {
 NON_TENANT_SEGMENTS = frozenset({
     "embed", "api", "v1", "js", "css", "assets", "static", "favicon.ico",
     "robots.txt", "sitemap.xml",
+    # Observed in the CC-MAIN-2026-30 harvest: Workable's job shortlink path
+    # (apply.workable.com/j/<id>), its placeholder account, and its docs
+    # placeholder slug. None is a tenant.
+    "j", "_", "company-name",
 })
+
+# Politeness (design §1): identify the client on every index request.
+USER_AGENT = "open-career-harvest/0.1 (+https://github.com/arnaldodelisio/open-career)"
 
 
 def extract_slugs(urls, ats_type: str) -> set[str]:
@@ -70,17 +77,21 @@ def extract_slugs(urls, ats_type: str) -> set[str]:
     return slugs
 
 
+def _request(url: str) -> urllib.request.Request:
+    return urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+
+
 def cdx_urls(index: str, url_pattern: str, page_limit: int | None):
     """Stream matching URLs from the CDX API, collapsed on urlkey so each URL
     appears once per index."""
     base = (f"{CDX_HOST}/{index}-index?url={urllib.parse.quote(url_pattern)}"
             "&output=json&fl=url&collapse=urlkey")
-    with urllib.request.urlopen(f"{base}&showNumPages=true", timeout=60) as response:
+    with urllib.request.urlopen(_request(f"{base}&showNumPages=true"), timeout=60) as response:
         pages = json.loads(response.read()).get("pages", 1)
     if page_limit is not None:
         pages = min(pages, page_limit)
     for page in range(pages):
-        with urllib.request.urlopen(f"{base}&page={page}", timeout=120) as response:
+        with urllib.request.urlopen(_request(f"{base}&page={page}"), timeout=120) as response:
             for line in response.read().decode().splitlines():
                 if not line.strip():
                     continue
