@@ -281,6 +281,7 @@ def test_deepen_walks_tier2_stance_facts_evidence_and_catchup(tmp_path):
         "", "", "",                                 # github, portfolio, website
         "", "", "", "",                             # company, title, consents
         "", "", "", "", "", "", "",                 # 7 EEO fields skipped
+        "",                                         # never_render skipped
         "always_decline",                           # eeo_stance
         # still-unset tier-1 fields (all 10 unset here): skip all
         "", "", "", "", "", "", "", "", "", "",

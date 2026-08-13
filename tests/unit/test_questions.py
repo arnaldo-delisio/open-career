@@ -45,7 +45,8 @@ def test_links_and_eeo_are_tier2_they_block_nothing():
     assert {"linkedin_url", "github_url", "portfolio_url", "website_url"} <= tier2
     assert {q.key for q in QUESTION_REGISTRY if q.key.startswith("eeo_")
             and q.kind == "profile"} <= tier2
-    assert {q.key for q in questions(kind="policy", tier=TIER2)} == {"eeo_stance"}
+    assert {q.key for q in questions(kind="policy", tier=TIER2)} == {
+        "eeo_stance", "never_render"}
 
 
 def test_salary_expectation_is_deliberately_floor_routed():

@@ -60,6 +60,26 @@ def _reserve(repo, lease_seconds=60):
     return repo.reserve_version(package.id, "owner-a", lease_seconds)
 
 
+def _pass_gauntlet(repo, version_id, verdict="PASS", suite=None):
+    """Approval precondition: record a complete Gauntlet run through the
+    repository's own fenced admission path."""
+    import json as _json
+
+    from domain.gauntlet import SUITE_VERSION
+    from domain.ids import new_id
+
+    suite = suite or SUITE_VERSION
+    repo.claim_gauntlet_reservation(version_id, suite, "judge-owner", 60)
+    return repo.insert_gauntlet_run(
+        version_id, suite, "judge-owner",
+        run_id=new_id("grun"), complete=1,
+        report_json=_json.dumps({"verdict": verdict, "stop_reason": "test"}),
+        prompt_inputs_locator="gl/p", prompt_inputs_hash="ph",
+        raw_completions_locator="gl/c", raw_completions_hash="ch",
+        resolved_models_json="{}", policy_snapshot_locator="gl/s",
+        policy_snapshot_hash="sh")
+
+
 def test_one_base_package_per_family(repo, conn):
     first = repo.get_or_create_base_package("rf_1")
     assert repo.get_or_create_base_package("rf_1").id == first.id
@@ -134,6 +154,7 @@ def test_early_failure_keeps_snapshot_fields_null(repo):
 def test_approve_sets_pointer_in_same_operation(repo):
     v = _reserve(repo)
     repo.finalize_verified(v.id, "owner-a", 1, **_bundle())
+    _pass_gauntlet(repo, v.id)
     repo.approve(v.id, "2026-08-11T00:00:00Z")
     approved = repo.get_version(v.id)
     assert approved.status == APPROVED and approved.approved_at is not None
@@ -154,6 +175,7 @@ def test_later_failed_generation_never_displaces_approved(repo):
     package = repo.get_or_create_base_package("rf_1")
     v1 = repo.reserve_version(package.id, "owner-a", 60)
     repo.finalize_verified(v1.id, "owner-a", 1, **_bundle())
+    _pass_gauntlet(repo, v1.id)
     repo.approve(v1.id, "2026-08-11T00:00:00Z")
     v2 = repo.reserve_version(package.id, "owner-a", 60)
     repo.fail(v2.id, "owner-a", 1, REPORT)

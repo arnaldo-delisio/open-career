@@ -18,6 +18,7 @@ ALL_TABLES = {
     "opportunity_versions", "gate_verdicts", "suspect_cohorts",
     "suspect_cohort_members", "promotion_queue", "discovery_runs",
     "dependency_epoch", "discovery_lease",
+    "gauntlet_runs", "gauntlet_reservations", "approval_decisions",
 }
 
 

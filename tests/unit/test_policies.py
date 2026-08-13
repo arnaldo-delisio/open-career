@@ -17,12 +17,14 @@ from domain.policies import (
 FLOOR = {"amount": 60000, "currency": "EUR", "period": "annual"}
 
 
-def test_policy_set_is_the_twelve_ratified_keys():
+def test_policy_set_is_the_closed_ratified_key_set():
     assert CANONICAL_POLICY_KEYS == {
         "eeo_stance", "compensation_floor", "compensation_target",
         "company_stage_pref", "company_size_pref", "industry_pref",
         "work_track", "mission_themes",
         "relocation_whitelist", "timezone_bounds", "visa_details", "earliest_start",
+        # Added by the Gauntlet design (stage-zero user-constraints check).
+        "never_render",
     }
 
 

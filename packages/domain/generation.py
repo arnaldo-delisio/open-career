@@ -109,11 +109,25 @@ class CvDraftingService:
         self._model = model
         self._prompt_template = prompt_template
 
-    def draft(self, context: GenerationContext, generated_at: str) -> DraftResult:
+    def draft(self, context: GenerationContext, generated_at: str,
+              external_findings: tuple[str, ...] = ()) -> DraftResult:
+        """external_findings is the Gauntlet regeneration seam (spec: the
+        scope's decisions/gauntlet-design.md, "Regeneration on failure"): a
+        prior version's blocking findings rendered as named failures,
+        schema-checked at this seam. The shipped feedback loop otherwise
+        carries only this service's own schema and verifier failures."""
+        if not all(isinstance(f, str) and f.strip() for f in external_findings):
+            raise ValueError(
+                "external findings must be non-empty strings (named failures)")
         verifier = GroundingVerifier(context)
         prompt = (self._prompt_template
                   .replace("{context_json}", context.snapshot_json())
                   .replace("{generated_at}", generated_at))
+        if external_findings:
+            named = "; ".join(external_findings)
+            prompt += ("\n\nA prior version of this package failed the Gauntlet"
+                       f" judging loop. Named failures to avoid repeating: {named}\n"
+                       "Fix every named failure while staying strictly grounded.")
         failure = ""
         attempts = 0
         for _ in range(MAX_DRAFT_ATTEMPTS):

@@ -22,8 +22,30 @@ class ClaudeCodeAdapter(ModelAdapter):
         # Injectable for tests (never call the real CLI in the suite); resolved
         # at call time so monkeypatching subprocess.run also works.
         self._run = run
+        self._provider_version: str | None = None
 
     def complete(self, prompt: str) -> str:
+        return self._complete_envelope(prompt)["result"]
+
+    def complete_with_meta(self, prompt: str) -> tuple[str, dict]:
+        """The envelope's provider-reported resolved model, observed per call,
+        never asserted from config (the Gauntlet design's model-identity
+        rule); absent field reports honestly as unreported."""
+        envelope = self._complete_envelope(prompt)
+        model = envelope.get("model") or envelope.get("modelName")
+        return envelope["result"], {"model": model if isinstance(model, str) and model
+                                    else "unreported"}
+
+    def provider_version(self) -> str:
+        """`claude --version` verbatim (e.g. '2.1.231 (Claude Code)'), cached
+        per adapter instance. Never inferred: an unusable CLI reports
+        'unavailable'."""
+        if self._provider_version is None:
+            self._provider_version = _cli_version(
+                self._run or subprocess.run, self._command)
+        return self._provider_version
+
+    def _complete_envelope(self, prompt: str) -> dict:
         run = self._run or subprocess.run
         try:
             proc = run(
@@ -56,4 +78,18 @@ class ClaudeCodeAdapter(ModelAdapter):
         if not isinstance(envelope["result"], str):
             raise ModelCallError(
                 f"'{self._command}' result field is {type(envelope['result']).__name__}, not text")
-        return envelope["result"]
+        return envelope
+
+
+def _cli_version(run, command: str) -> str:
+    """One `<command> --version` call, verbatim output. Any failure is
+    'unavailable': a provider version is observed or absent, never guessed."""
+    try:
+        proc = run([command, "--version"], capture_output=True, text=True,
+                   timeout=30)
+    except Exception:
+        return "unavailable"
+    if getattr(proc, "returncode", 1) != 0:
+        return "unavailable"
+    version = (proc.stdout or "").strip().splitlines()
+    return version[0].strip() if version and version[0].strip() else "unavailable"

@@ -217,6 +217,26 @@ def _ask_eeo_stance(policies: SqliteUserPolicyRepository, ask: Ask, say: Say) ->
 _POLICY_ASKERS["eeo_stance"] = _ask_eeo_stance
 
 
+def _ask_never_render(policies: SqliteUserPolicyRepository, ask: Ask, say: Say) -> None:
+    """The never-render list (OC-26 personal boundaries): literal strings
+    that must not appear in any rendered artifact, written through the
+    audited policy seam and consumed by the Gauntlet's stage-zero
+    user-constraints check via the policy snapshot."""
+    current = policies.get_policies().get("never_render") or []
+    raw = ask("Strings that must never appear in a rendered CV (personal"
+              " boundaries, comma-separated; blank keeps"
+              f" [{', '.join(current)}]): ").strip()
+    if not raw:
+        return
+    additions = [part.strip() for part in raw.split(",") if part.strip()]
+    merged = list(dict.fromkeys(current + additions))
+    policies.set_policy("never_render", merged, source="user_edit")
+    say("never_render updated.")
+
+
+_POLICY_ASKERS["never_render"] = _ask_never_render
+
+
 _EVIDENCE_INTAKE_TYPES = ("repository", "portfolio", "url", "artifact", "document")
 
 

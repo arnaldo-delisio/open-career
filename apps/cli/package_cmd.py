@@ -14,7 +14,7 @@ import hashlib
 import json
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Callable
 
@@ -36,10 +36,13 @@ from domain.context import GenerationContext, StrategySnapshot
 from domain.cv_model import Bullet, CvExperienceEntry, CvModel, parse_cv_model
 from domain.edges import CareerEdge
 from domain.entities import CareerFact, Evidence
+from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
+from domain.gauntlet import SUITE_VERSION, GauntletRunner, GauntletRunResult
+from domain.gauntlet_judges import JUDGES, PROMPT_FILES
 from domain.generation import CvDraftingService
 from domain.grounding import GroundingVerifier
 from domain.ids import new_id
-from domain.packages import APPROVED, GENERATING, VERIFIED, PackageVersion
+from domain.packages import APPROVED, GENERATING, VERIFIED, PackageStateError, PackageVersion
 from domain.pipeline import GenerationPipeline, PipelineResult, recover_expired
 from domain.ports import ModelAdapter, StorageAdapter
 from domain.selection import FamilyEvidenceSelection
@@ -131,7 +134,9 @@ def heartbeat_repo_factory(conn: sqlite3.Connection):
 
 def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
                  model: ModelAdapter | None, family_ref: str, page_budget: int,
-                 say: Say, edited_model: CvModel | None = None) -> PipelineResult:
+                 say: Say, edited_model: CvModel | None = None,
+                 judge_models: dict[str, ModelAdapter] | None = None,
+                 findings_from: str | None = None) -> PipelineResult:
     context = build_context(conn, family_ref)
     if not context.selection.selections:
         raise PackageCliError(
@@ -142,10 +147,122 @@ def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
     package = repo.get_or_create_base_package(context.role_family_id)
     for gap in context.selection.gaps:
         say(f"gap: targeted capability '{gap.name}' has no eligible evidence chain")
+    external_findings = (_blocking_findings(repo, findings_from)
+                         if findings_from else ())
     result = make_pipeline(conn, storage, model).generate(
-        package.id, context, page_budget=page_budget, edited_model=edited_model)
+        package.id, context, page_budget=page_budget, edited_model=edited_model,
+        external_findings=external_findings)
     say(f"version {result.version_id}: {result.status} ({result.detail})")
+    # The Gauntlet runs inline immediately after finalizing VERIFIED (OC-20:
+    # unattended execution); a crash in this window leaves a VERIFIED version
+    # with no run, reconciled automatically by `package review` and surfaced
+    # by `package show` as gauntlet: pending.
+    if result.status == VERIFIED and judge_models is not None:
+        version = repo.get_version(result.version_id)
+        gauntlet = _run_gauntlet_attempt(conn, storage, judge_models, version, say)
+        if gauntlet.verdict == "FAIL":
+            say(f"regenerate with the failures named: `open-career package"
+                f" generate {family_ref} --findings-from {result.version_id}`")
     return result
+
+
+def _blocking_findings(repo: SqlitePackageRepository, version_id: str) -> tuple[str, ...]:
+    """A prior version's blocking Gauntlet findings, rendered as named
+    failures for the regeneration prompt."""
+    version = _version_or_die(repo, version_id)
+    run = repo.effective_gauntlet_run(version.id, SUITE_VERSION)
+    if run is None:
+        raise PackageCliError(
+            f"'{version_id}' has no effective Gauntlet run under the current"
+            f" suite '{SUITE_VERSION}'; run `open-career package gauntlet"
+            f" {version_id}` first")
+    report = json.loads(run.report_json)
+    named = tuple(
+        f"[{judge['judge']}/{f['element_id']}] {f['message']} (quote: '{f['quote']}')"
+        for judge in report["judges"] for f in judge["findings"]
+        if f["severity"] == "blocking")
+    named += tuple(
+        f"[invariant/{r['rule']}] {r['detail']}"
+        for r in report["invariants"] if r["disposition"] == "fail")
+    if not named:
+        raise PackageCliError(
+            f"'{version_id}' has no blocking Gauntlet findings to feed back")
+    return named
+
+
+# -- gauntlet ---------------------------------------------------------------
+
+def _gauntlet_runner(conn: sqlite3.Connection, storage: StorageAdapter,
+                     judge_models: dict[str, ModelAdapter]) -> GauntletRunner:
+    from adapters.render.pdftext import PopplerPdfTextExtractor
+    from prompts import load_prompt as _load
+
+    missing = set(JUDGES) - set(judge_models)
+    if missing:
+        raise PackageCliError(f"no model adapter configured for judges {sorted(missing)}")
+    repo = SqlitePackageRepository(conn)
+    # An in-memory database has no file to open a second connection to, so
+    # the heartbeat shares this one explicitly (the runner refuses to assume
+    # a shared connection on its own).
+    factory = heartbeat_repo_factory(conn) or (lambda: nullcontext(repo))
+    return GauntletRunner(
+        repo, storage, PopplerPdfTextExtractor(),
+        judge_models, {j: _load(PROMPT_FILES[j]) for j in JUDGES},
+        heartbeat_repo_factory=factory)
+
+
+def _run_gauntlet_attempt(conn: sqlite3.Connection, storage: StorageAdapter,
+                          judge_models: dict[str, ModelAdapter],
+                          version: PackageVersion, say: Say) -> GauntletRunResult:
+    profile = SqliteUserProfileRepository(conn).get_fields()
+    policies = SqliteUserPolicyRepository(conn).get_policies()
+    result = _gauntlet_runner(conn, storage, judge_models).run(
+        version, profile, policies)
+    if result.run is None:
+        say(f"gauntlet: {result.detail}")
+    else:
+        say(f"gauntlet run {result.run.id} (suite {SUITE_VERSION}, attempt"
+            f" {result.run.attempt}): {result.verdict} ({result.detail})")
+    return result
+
+
+def _print_gauntlet_report(run, say: Say) -> None:
+    report = json.loads(run.report_json)
+    say(f"gauntlet {run.id}  suite {run.suite_version}  attempt {run.attempt}"
+        f"  {'complete' if run.complete else 'incomplete'}"
+        f"  verdict {report['verdict']}  ({report['stop_reason']})")
+    for r in report.get("invariants", []):
+        say(f"  invariant {r['rule']}: {r['disposition']}"
+            + (f" ({r['detail']})" if r["disposition"] != "pass" else ""))
+    for judge in report.get("judges", []):
+        say(f"  judge {judge['judge']} (model {judge['model']},"
+            f" attempts {judge['attempts']}): {judge['verdict']}")
+        for f in judge["findings"]:
+            say(f"    [{f['severity']}] {f['element_id']}: {f['message']}"
+                f" (quote: '{f['quote']}')")
+        if judge["invalid_findings"]:
+            say(f"    invalid findings discarded: {len(judge['invalid_findings'])}")
+
+
+def run_gauntlet(conn: sqlite3.Connection, storage: StorageAdapter,
+                 judge_models: dict[str, ModelAdapter], version_id: str,
+                 as_json: bool, say: Say) -> None:
+    """`package gauntlet <version-id>`: deliberate early repair and re-judging
+    under a newer suite; never a step completion depends on. Re-runs are
+    governed solely by the suite-uniqueness rule."""
+    repo = SqlitePackageRepository(conn)
+    version = _version_or_die(repo, version_id)
+    result = _run_gauntlet_attempt(conn, storage, judge_models, version,
+                                   say if not as_json else (lambda _s: None))
+    if result.run is None:
+        if as_json:
+            say(json.dumps({"run": None, "detail": result.detail}, indent=2))
+        return
+    if as_json:
+        say(json.dumps({"run": result.run.id,
+                        "report": json.loads(result.run.report_json)}, indent=2))
+    else:
+        _print_gauntlet_report(result.run, say)
 
 
 def _require_renderable_experience(context: GenerationContext) -> None:
@@ -207,6 +324,11 @@ def run_show(conn: sqlite3.Connection, ref: str, as_json: bool, say: Say) -> Non
             say(f"  v{v.version}  {v.id}  {v.status}  {v.created_at}")
         return
 
+    runs = repo.list_gauntlet_runs(version.id)  # newest first by seq
+    gauntlet_status = ("pending"
+                       if version.status in (VERIFIED, APPROVED)
+                       and repo.effective_gauntlet_run(version.id, SUITE_VERSION) is None
+                       else "adjudicated" if runs else None)
     payload = {
         "id": version.id, "package_id": version.package_id, "version": version.version,
         "status": version.status,
@@ -216,11 +338,20 @@ def run_show(conn: sqlite3.Connection, ref: str, as_json: bool, say: Say) -> Non
         "failure_report": json.loads(version.failure_report_json or "null"),
         "context_snapshot_locator": version.context_snapshot_locator,
         "artifact_locator": version.artifact_locator,
+        "gauntlet": gauntlet_status,
+        "gauntlet_runs": [{"id": r.id, "suite_version": r.suite_version,
+                           "attempt": r.attempt, "complete": bool(r.complete),
+                           "verdict": r.verdict, "created_at": r.created_at}
+                          for r in runs],
     }
     if as_json:
         say(json.dumps(payload, indent=2))
         return
     say(f"version {version.id} (v{version.version}, {version.status})")
+    if gauntlet_status == "pending":
+        say(f"  gauntlet: pending (no run under the current suite {SUITE_VERSION})")
+    for run in runs:
+        _print_gauntlet_report(run, say)
     # Locators are storage-relative; print the real on-disk paths.
     if version.artifact_locator:
         say(f"  artifact: {instance_dir() / version.artifact_locator}")
@@ -281,20 +412,39 @@ def _mint_fact_for_edit(conn: sqlite3.Connection, context: GenerationContext,
 
 def run_review(conn: sqlite3.Connection, storage: StorageAdapter,
                model: ModelAdapter | None, version_id: str, page_budget: int,
-               ask: Ask, say: Say) -> None:
+               ask: Ask, say: Say,
+               judge_models: dict[str, ModelAdapter] | None = None,
+               accept_despite: str | None = None) -> None:
     repo = SqlitePackageRepository(conn)
     version = _version_or_die(repo, version_id)
     if version.status not in (VERIFIED, APPROVED):
         raise PackageCliError(f"only a VERIFIED version can be reviewed;"
                               f" '{version_id}' is {version.status}")
+    # Reconciliation is automatic, not remembered: a VERIFIED version with no
+    # run under the currently shipped suite is judged here, before the gate.
+    if (version.status == VERIFIED
+            and repo.effective_gauntlet_run(version.id, SUITE_VERSION) is None
+            and judge_models is not None):
+        say(f"gauntlet: no run under the current suite {SUITE_VERSION};"
+            " judging now")
+        _run_gauntlet_attempt(conn, storage, judge_models, version, say)
     cv = parse_cv_model(version.content_model_json)
     run_show(conn, version_id, False, say)
     action = ask("accept/edit/quit (a/e/q) [a]: ").strip().lower() or "a"
     if action in ("q", "quit"):
         return
     if action in ("a", "accept"):
-        repo.approve(version.id, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-        say(f"approved {version.id}")
+        try:
+            repo.approve(version.id, time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                         override=accept_despite is not None,
+                         override_reason=accept_despite)
+        except PackageStateError as e:
+            raise PackageCliError(str(e)) from e
+        if accept_despite is not None:
+            say(f"approved {version.id} DESPITE the Gauntlet verdict"
+                f" (override recorded: {accept_despite})")
+        else:
+            say(f"approved {version.id}")
         return
 
     # Edit: pick a bullet, replace its text, then the write-back loop.

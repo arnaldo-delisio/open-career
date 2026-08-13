@@ -28,6 +28,10 @@ CANONICAL_POLICY_KEYS: frozenset[str] = frozenset({
     "work_track", "mission_themes",
     # logistics depth (depth cluster 6)
     "relocation_whitelist", "timezone_bounds", "visa_details", "earliest_start",
+    # personal rendering boundaries (OC-26; Gauntlet stage zero consumes this
+    # via the policy snapshot: literal strings that must never appear in any
+    # rendered artifact)
+    "never_render",
 })
 
 
@@ -155,6 +159,7 @@ _VALIDATORS = {
     "timezone_bounds": _validate_timezone_bounds,
     "visa_details": _validate_visa_details,
     "earliest_start": _validate_date,
+    "never_render": _validate_str_list,
 }
 
 if set(_VALIDATORS) != CANONICAL_POLICY_KEYS:  # import-time backstop

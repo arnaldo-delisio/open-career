@@ -131,6 +131,11 @@ _TIER2_PROFILE = (
 )
 
 _TIER2_POLICIES = (
+    Question("never_render", "policy", TIER2,
+             "Strings that must never appear in any rendered artifact"
+             " (personal boundaries, e.g. a name you never publish)",
+             "Gauntlet stage-zero user-constraints check, via the policy"
+             " snapshot; the list lives in instance data, the check in code"),
     Question("eeo_stance", "policy", TIER2,
              "EEO stance: answer honestly, always decline, or decide per application",
              "routes every EEO block; unset behaves as per_application",

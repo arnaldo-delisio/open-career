@@ -7,7 +7,10 @@ bundle fields, and the generation lease. Lease time comparisons run at the
 database clock, never the process clock."""
 
 import sqlite3
+from typing import Callable
 
+from domain.gauntlet import GauntletRun, ReservationLostError
+from domain.gauntlet import SUITE_VERSION as CURRENT_SUITE_VERSION
 from domain.ids import new_id
 from domain.packages import (
     APPROVED,
@@ -43,9 +46,29 @@ def _expiry(lease_seconds: int) -> str:
     return f"strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '{int(lease_seconds)} seconds')"
 
 
+_GRUN_COLUMNS = ("seq, id, package_version_id, suite_version, attempt, complete,"
+                 " report_json, prompt_inputs_locator, prompt_inputs_hash,"
+                 " raw_completions_locator, raw_completions_hash,"
+                 " resolved_models_json, policy_snapshot_locator,"
+                 " policy_snapshot_hash, created_at")
+_GRUN_SELECT = f"SELECT {_GRUN_COLUMNS} FROM gauntlet_runs"
+
+# The fields insert_gauntlet_run takes besides identity; seq, attempt, and
+# created_at are allocated inside the fenced transaction.
+_GRUN_INSERT_FIELDS = (
+    "run_id", "complete", "report_json", "prompt_inputs_locator",
+    "prompt_inputs_hash", "raw_completions_locator", "raw_completions_hash",
+    "resolved_models_json", "policy_snapshot_locator", "policy_snapshot_hash")
+
+
 class SqlitePackageRepository(PackageRepository):
-    def __init__(self, conn: sqlite3.Connection):
+    def __init__(self, conn: sqlite3.Connection,
+                 suite_version_provider: Callable[[], str] | None = None):
         self._conn = conn
+        # The repository owns the current suite_version (injected at
+        # construction from the shipped suite constant, never an approve-call
+        # argument), so no caller can pass a stale suite.
+        self._suite_version = suite_version_provider or (lambda: CURRENT_SUITE_VERSION)
 
     # -- packages ----------------------------------------------------------
 
@@ -196,14 +219,49 @@ class SqlitePackageRepository(PackageRepository):
             )
         return cur.rowcount == 1
 
-    def approve(self, version_id: str, approved_at: str) -> None:
-        with self._conn:  # approval and approved_version_id land together
+    def approve(self, version_id: str, approved_at: str, override: bool = False,
+                override_reason: str | None = None) -> None:
+        with self._conn:  # decision, approval, and pointer land together
             version = self.get_version(version_id)
             if version is None:
                 raise PackageStateError(f"package version '{version_id}' does not exist")
             if version.status != VERIFIED:
                 raise PackageStateError(
                     f"only a VERIFIED version can be approved; '{version_id}' is {version.status}")
+            # The approval gate: the repository resolves the current suite's
+            # effective run itself, inside this transaction. An effective
+            # terminal current-suite run is a precondition of every approval,
+            # override included; an override can waive only a recorded FAIL
+            # or ATTENTION verdict, never missing adjudication.
+            suite = self._suite_version()
+            run = self.effective_gauntlet_run(version_id, suite)
+            if run is None:
+                raise PackageStateError(
+                    f"no effective Gauntlet run under the current suite '{suite}'"
+                    f" for '{version_id}'; run `open-career package gauntlet"
+                    f" {version_id}` (or `package review`, which reconciles)"
+                    " before approving")
+            verdict = run.verdict
+            if not override:
+                if verdict != "PASS":
+                    raise PackageStateError(
+                        f"the effective Gauntlet run's verdict is {verdict};"
+                        " approve with --accept-despite-gauntlet \"<reason>\""
+                        " to record an override, or regenerate")
+            else:
+                if not override_reason or not override_reason.strip():
+                    raise PackageStateError(
+                        "an override always requires a non-empty reason")
+                if verdict not in ("FAIL", "ATTENTION"):
+                    raise PackageStateError(
+                        f"nothing to override: the effective run's verdict is"
+                        f" {verdict}, not FAIL or ATTENTION")
+            self._conn.execute(
+                "INSERT INTO approval_decisions (id, package_version_id,"
+                " gauntlet_run_id, verdict_at_decision, override, override_reason)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (new_id("apd"), version_id, run.id, verdict,
+                 1 if override else 0, override_reason))
             self._conn.execute(
                 "UPDATE package_versions SET status = ?, approved_at = ? WHERE id = ?",
                 (APPROVED, approved_at, version_id),
@@ -215,6 +273,133 @@ class SqlitePackageRepository(PackageRepository):
                 " WHERE id = ?",
                 (version_id, version.package_id),
             )
+
+    # -- Gauntlet (spec: the scope's decisions/gauntlet-design.md) ---------
+
+    def claim_gauntlet_reservation(self, version_id: str, suite_version: str,
+                                   owner_token: str, ttl_seconds: int) -> bool:
+        with self._conn:  # existing-complete check and claim are one atomic txn
+            if self.get_version(version_id) is None:
+                raise PackageStateError(f"package version '{version_id}' does not exist")
+            complete = self._conn.execute(
+                "SELECT 1 FROM gauntlet_runs WHERE package_version_id = ?"
+                " AND suite_version = ? AND complete = 1",
+                (version_id, suite_version)).fetchone()
+            if complete:
+                raise PackageStateError(
+                    f"a complete Gauntlet attempt already exists for"
+                    f" '{version_id}' under suite '{suite_version}'; a suite"
+                    " bump is the only path to re-judging (no --force)")
+            try:
+                self._conn.execute(
+                    "INSERT INTO gauntlet_reservations (package_version_id,"
+                    f" suite_version, owner_token, expires_at)"
+                    f" VALUES (?, ?, ?, {_expiry(ttl_seconds)})",
+                    (version_id, suite_version, owner_token))
+                return True
+            except sqlite3.IntegrityError:
+                # Take over only past expiry at the database clock, minting
+                # the new owner token in the same conditional update.
+                cur = self._conn.execute(
+                    "UPDATE gauntlet_reservations SET owner_token = ?,"
+                    f" expires_at = {_expiry(ttl_seconds)}"
+                    f" WHERE package_version_id = ? AND suite_version = ?"
+                    f" AND expires_at <= {_NOW}",
+                    (owner_token, version_id, suite_version))
+                return cur.rowcount == 1
+
+    def renew_gauntlet_reservation(self, version_id: str, suite_version: str,
+                                   owner_token: str, ttl_seconds: int) -> bool:
+        with self._conn:  # one atomic conditional renewal; zero rows = stop
+            cur = self._conn.execute(
+                f"UPDATE gauntlet_reservations SET expires_at = {_expiry(ttl_seconds)}"
+                f" WHERE package_version_id = ? AND suite_version = ?"
+                f" AND owner_token = ? AND expires_at > {_NOW}",
+                (version_id, suite_version, owner_token))
+        return cur.rowcount == 1
+
+    def release_gauntlet_reservation(self, version_id: str, suite_version: str,
+                                     owner_token: str) -> bool:
+        with self._conn:  # one atomic fenced release; zero rows = not ours
+            cur = self._conn.execute(
+                "DELETE FROM gauntlet_reservations WHERE package_version_id = ?"
+                f" AND suite_version = ? AND owner_token = ? AND expires_at > {_NOW}",
+                (version_id, suite_version, owner_token))
+        return cur.rowcount == 1
+
+    def insert_gauntlet_run(self, version_id: str, suite_version: str,
+                            owner_token: str, **fields) -> GauntletRun:
+        missing = [f for f in _GRUN_INSERT_FIELDS if fields.get(f) is None]
+        unknown = set(fields) - set(_GRUN_INSERT_FIELDS)
+        if missing or unknown:
+            raise PackageStateError(
+                f"a Gauntlet run row is write-once and complete on insert;"
+                f" missing {missing}, unknown {sorted(unknown)}")
+        with self._conn:  # fenced consume and append-only insert, one txn
+            cur = self._conn.execute(
+                f"DELETE FROM gauntlet_reservations WHERE package_version_id = ?"
+                f" AND suite_version = ? AND owner_token = ?"
+                f" AND expires_at > {_NOW}",
+                (version_id, suite_version, owner_token))
+            if cur.rowcount != 1:
+                # A zero-row consume discards the stale worker's result
+                # entirely: it inserts nothing.
+                raise ReservationLostError(
+                    f"gauntlet reservation on '{version_id}' (suite"
+                    f" '{suite_version}') expired or is owned by a successor;"
+                    " result discarded")
+            (attempt,) = self._conn.execute(
+                "SELECT COALESCE(MAX(attempt), 0) + 1 FROM gauntlet_runs"
+                " WHERE package_version_id = ? AND suite_version = ?",
+                (version_id, suite_version)).fetchone()
+            try:
+                self._conn.execute(
+                    "INSERT INTO gauntlet_runs (id, package_version_id,"
+                    " suite_version, attempt, complete, report_json,"
+                    " prompt_inputs_locator, prompt_inputs_hash,"
+                    " raw_completions_locator, raw_completions_hash,"
+                    " resolved_models_json, policy_snapshot_locator,"
+                    " policy_snapshot_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (fields["run_id"], version_id, suite_version, attempt,
+                     fields["complete"], fields["report_json"],
+                     fields["prompt_inputs_locator"], fields["prompt_inputs_hash"],
+                     fields["raw_completions_locator"],
+                     fields["raw_completions_hash"],
+                     fields["resolved_models_json"],
+                     fields["policy_snapshot_locator"],
+                     fields["policy_snapshot_hash"]))
+            except sqlite3.IntegrityError as e:
+                # The partial unique index: a second complete same-suite
+                # adjudication is impossible regardless of application logic.
+                raise PackageStateError(
+                    f"gauntlet run insert violated append-only uniqueness: {e}") from e
+        return self.get_gauntlet_run(fields["run_id"])
+
+    def get_gauntlet_run(self, run_id: str) -> GauntletRun | None:
+        row = self._conn.execute(
+            f"{_GRUN_SELECT} WHERE id = ?", (run_id,)).fetchone()
+        return GauntletRun(*row) if row else None
+
+    def list_gauntlet_runs(self, version_id: str) -> list[GauntletRun]:
+        rows = self._conn.execute(
+            f"{_GRUN_SELECT} WHERE package_version_id = ? ORDER BY seq DESC",
+            (version_id,)).fetchall()
+        return [GauntletRun(*r) for r in rows]
+
+    def effective_gauntlet_run(self, version_id: str,
+                               suite_version: str) -> GauntletRun | None:
+        row = self._conn.execute(
+            f"{_GRUN_SELECT} WHERE package_version_id = ? AND suite_version = ?"
+            " AND complete = 1 ORDER BY seq DESC LIMIT 1",
+            (version_id, suite_version)).fetchone()
+        return GauntletRun(*row) if row else None
+
+    def list_approval_decisions(self, version_id: str) -> list[tuple]:
+        return self._conn.execute(
+            "SELECT id, package_version_id, gauntlet_run_id, verdict_at_decision,"
+            " override, override_reason, created_at FROM approval_decisions"
+            " WHERE package_version_id = ? ORDER BY created_at, id",
+            (version_id,)).fetchall()
 
     # -- helpers -----------------------------------------------------------
 

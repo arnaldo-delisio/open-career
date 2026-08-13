@@ -1,0 +1,236 @@
+{
+  "normalization_spec_version": 1,
+  "renderable_grounding_view": {
+    "capabilities": {
+      "cap-api": {
+        "name": "API design",
+        "strength": "strong"
+      },
+      "cap-kubernetes": {
+        "name": "Kubernetes",
+        "strength": "working"
+      },
+      "cap-python": {
+        "name": "Python",
+        "strength": "strong"
+      }
+    },
+    "experiences": {
+      "exp-aurora": {
+        "end_date": "2024-06",
+        "kind": "role",
+        "org": "Aurora Logistics",
+        "start_date": "2021-03",
+        "title": "Backend Engineer"
+      },
+      "exp-brightcart": {
+        "end_date": "2021-02",
+        "kind": "role",
+        "org": "BrightCart",
+        "start_date": "2018-09",
+        "title": "Software Engineer"
+      },
+      "exp-openroute": {
+        "end_date": null,
+        "kind": "project",
+        "org": "OpenRoute",
+        "start_date": "2022-01",
+        "title": "Maintainer"
+      },
+      "exp-uni": {
+        "end_date": "2018-06",
+        "kind": "education",
+        "org": "University of Rotterdam",
+        "start_date": "2015-09",
+        "title": "BSc Computer Science"
+      }
+    },
+    "facts": {
+      "f-clients": {
+        "experience_id": "exp-brightcart",
+        "fact_type": "achievement",
+        "statement": "Maya built checkout integrations for two enterprise clients."
+      },
+      "f-conversion": {
+        "experience_id": "exp-brightcart",
+        "fact_type": "activity",
+        "statement": "Maya ran A/B tests on the checkout flow, improving conversion."
+      },
+      "f-costs": {
+        "experience_id": "exp-aurora",
+        "fact_type": "achievement",
+        "statement": "The team reduced monthly hosting costs by 30 percent by consolidating three Kubernetes clusters into one."
+      },
+      "f-deliver": {
+        "experience_id": "exp-aurora",
+        "fact_type": "responsibility",
+        "statement": "Maya delivered quarterly cost reports to finance."
+      },
+      "f-explore": {
+        "experience_id": "exp-aurora",
+        "fact_type": "activity",
+        "statement": "Maya explored a streaming replacement for the nightly batch pipeline."
+      },
+      "f-latency": {
+        "experience_id": "exp-aurora",
+        "fact_type": "achievement",
+        "statement": "Maya rewrote the routing cache, cutting median API latency from 220 ms to 90 ms."
+      },
+      "f-migration": {
+        "experience_id": "exp-aurora",
+        "fact_type": "achievement",
+        "statement": "Maya led the migration of the order service from Python 2 to Python 3."
+      },
+      "f-oncall": {
+        "experience_id": "exp-aurora",
+        "fact_type": "responsibility",
+        "statement": "Maya maintained the legacy billing systems and kept uptime at 99.9 percent."
+      },
+      "f-openroute-adopt": {
+        "experience_id": "exp-openroute",
+        "fact_type": "achievement",
+        "statement": "OpenRoute was adopted by two Dutch logistics startups."
+      },
+      "f-openroute-maint": {
+        "experience_id": "exp-openroute",
+        "fact_type": "responsibility",
+        "statement": "Maya maintains OpenRoute, an open-source route planning library, and reviews community pull requests."
+      },
+      "f-platform": {
+        "experience_id": "exp-aurora",
+        "fact_type": "responsibility",
+        "statement": "Maya worked as one of five engineers on the platform team supporting the deployment pipeline."
+      },
+      "f-thesis": {
+        "experience_id": "exp-uni",
+        "fact_type": "achievement",
+        "statement": "Maya wrote a thesis on graph search heuristics at the University of Rotterdam."
+      }
+    },
+    "profile": {
+      "authorized_in_country": "yes",
+      "email": "maya.lindqvist@example.com",
+      "full_name": "Maya Lindqvist",
+      "headline": "Backend Engineer",
+      "location": "Amsterdam, Netherlands",
+      "name": "Maya Lindqvist",
+      "needs_sponsorship": "no",
+      "phone": "+31 6 0000 0000",
+      "work_authorization_note": "Authorized to work in the Netherlands; no visa sponsorship required."
+    }
+  },
+  "role_family_id": "rf-backend",
+  "selection": {
+    "capabilities": [
+      {
+        "capability_id": "cap-python",
+        "capability_name": "Python",
+        "chains": [
+          {
+            "evidence_id": "ev-1",
+            "facts": [
+              {
+                "fact_id": "f-migration",
+                "proves_edge_id": "pe-f-migration"
+              },
+              {
+                "fact_id": "f-latency",
+                "proves_edge_id": "pe-f-latency"
+              },
+              {
+                "fact_id": "f-explore",
+                "proves_edge_id": "pe-f-explore"
+              },
+              {
+                "fact_id": "f-deliver",
+                "proves_edge_id": "pe-f-deliver"
+              },
+              {
+                "fact_id": "f-clients",
+                "proves_edge_id": "pe-f-clients"
+              },
+              {
+                "fact_id": "f-conversion",
+                "proves_edge_id": "pe-f-conversion"
+              },
+              {
+                "fact_id": "f-thesis",
+                "proves_edge_id": "pe-f-thesis"
+              }
+            ],
+            "supports_edge_id": "se-1"
+          }
+        ],
+        "covered": true
+      },
+      {
+        "capability_id": "cap-kubernetes",
+        "capability_name": "Kubernetes",
+        "chains": [
+          {
+            "evidence_id": "ev-2",
+            "facts": [
+              {
+                "fact_id": "f-costs",
+                "proves_edge_id": "pe-f-costs"
+              },
+              {
+                "fact_id": "f-platform",
+                "proves_edge_id": "pe-f-platform"
+              },
+              {
+                "fact_id": "f-oncall",
+                "proves_edge_id": "pe-f-oncall"
+              }
+            ],
+            "supports_edge_id": "se-2"
+          }
+        ],
+        "covered": true
+      },
+      {
+        "capability_id": "cap-api",
+        "capability_name": "API design",
+        "chains": [
+          {
+            "evidence_id": "ev-3",
+            "facts": [
+              {
+                "fact_id": "f-openroute-maint",
+                "proves_edge_id": "pe-f-openroute-maint"
+              },
+              {
+                "fact_id": "f-openroute-adopt",
+                "proves_edge_id": "pe-f-openroute-adopt"
+              }
+            ],
+            "supports_edge_id": "se-3"
+          }
+        ],
+        "covered": true
+      }
+    ],
+    "gaps": [],
+    "role_family_id": "rf-backend"
+  },
+  "strategy": {
+    "allocation": 40,
+    "family": {
+      "adjacent_titles": [
+        "Software Engineer",
+        "Platform Engineer"
+      ],
+      "id": "rf-backend",
+      "name": "Backend Engineer",
+      "rationale": "Strongest evidence chains sit in backend service work.",
+      "search_vocabulary": [
+        "backend",
+        "python",
+        "kubernetes",
+        "api"
+      ]
+    },
+    "objective": "Land a senior backend role at a product company in the Netherlands.",
+    "strategy_version": 1
+  }
+}

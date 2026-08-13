@@ -99,6 +99,24 @@ def _model_json(conn):
     return cv.to_json()
 
 
+def _pass_gauntlet(conn, version_id):
+    """Approval precondition (the Gauntlet gate): record a complete PASS run
+    through the repository's fenced admission path."""
+    from domain.gauntlet import SUITE_VERSION
+    from domain.ids import new_id
+
+    repo = SqlitePackageRepository(conn)
+    repo.claim_gauntlet_reservation(version_id, SUITE_VERSION, "judge-owner", 60)
+    repo.insert_gauntlet_run(
+        version_id, SUITE_VERSION, "judge-owner",
+        run_id=new_id("grun"), complete=1,
+        report_json=json.dumps({"verdict": "PASS", "stop_reason": "test"}),
+        prompt_inputs_locator="g/p", prompt_inputs_hash="ph",
+        raw_completions_locator="g/c", raw_completions_hash="ch",
+        resolved_models_json="{}", policy_snapshot_locator="g/s",
+        policy_snapshot_hash="sh")
+
+
 def test_end_to_end_generate_verify_render_extract(env):
     conn, storage = env
     result = package_cmd.run_generate(
@@ -131,6 +149,7 @@ def test_review_accept_approves_and_export_validates_hash(env, tmp_path):
     conn, storage = env
     result = package_cmd.run_generate(
         conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    _pass_gauntlet(conn, result.version_id)
     said = []
     package_cmd.run_review(conn, storage, None, result.version_id, 1,
                            iter(["a"]).__next__ if False else lambda _p: "a", said.append)
@@ -218,7 +237,7 @@ class _SlowVerbatimDrafter:
     def __init__(self, delay: float):
         self._delay = delay
 
-    def draft(self, context, generated_at):
+    def draft(self, context, generated_at, external_findings=()):
         time.sleep(self._delay)
         cv, dropped = build_verbatim_model(context, generated_at)
         return DraftResult(cv=cv, report=GroundingVerifier(context).verify(cv),
@@ -465,6 +484,7 @@ def test_cli_export_defaults_to_the_approved_version(env, tmp_path, monkeypatch)
     # No id and nothing approved yet: refuse with the repair path named.
     with pytest.raises(package_cmd.PackageCliError, match="no approved version"):
         package_cmd.run_export(conn, storage, None, tmp_path / "cv.pdf", lambda _s: None)
+    _pass_gauntlet(conn, result.version_id)
     SqlitePackageRepository(conn).approve(result.version_id, "2026-08-12T00:00:00Z")
     conn.commit()
     out = tmp_path / "exported" / "cv.pdf"

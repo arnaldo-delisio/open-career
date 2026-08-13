@@ -102,10 +102,13 @@ class GenerationPipeline:
 
     def generate(self, package_id: str, context: GenerationContext,
                  page_budget: int = DEFAULT_PAGE_BUDGET,
-                 edited_model: CvModel | None = None) -> PipelineResult:
+                 edited_model: CvModel | None = None,
+                 external_findings: tuple[str, ...] = ()) -> PipelineResult:
         """Generate the next version. edited_model bypasses the model call
         (the review write-back loop regenerates from a user-edited draft) but
-        never the verifier, the render, or the ATS check."""
+        never the verifier, the render, or the ATS check. external_findings
+        (a prior version's Gauntlet blocking findings, rendered as named
+        failures) flow into the drafting prompt."""
         owner = f"worker-{int(time.time() * 1000)}-{threading.get_ident()}"
         version = self._repo.reserve_version(package_id, owner, LEASE_SECONDS)
         heartbeat = _Heartbeat(self._heartbeat_repo_factory, version.id, owner,
@@ -114,7 +117,7 @@ class GenerationPipeline:
         stage_ref = ["reserve"]
         try:
             return self._run(version, owner, context, page_budget, edited_model,
-                             heartbeat, stage_ref)
+                             heartbeat, stage_ref, external_findings)
         except LeaseLostError:
             heartbeat.stop_and_join()
             return self._report_lease_loss(version, owner, heartbeat, stage_ref[0])
@@ -160,7 +163,8 @@ class GenerationPipeline:
 
     def _run(self, version: PackageVersion, owner: str, context: GenerationContext,
              page_budget: int, edited_model: CvModel | None,
-             heartbeat: _Heartbeat, stage_ref: list[str]) -> PipelineResult:
+             heartbeat: _Heartbeat, stage_ref: list[str],
+             external_findings: tuple[str, ...] = ()) -> PipelineResult:
         repo, generation = self._repo, version.lease_generation
 
         def guard() -> None:
@@ -200,7 +204,8 @@ class GenerationPipeline:
         else:
             if self._drafter is None:
                 raise RuntimeError("no drafting service configured")
-            draft = self._drafter.draft(context, generated_at)
+            draft = self._drafter.draft(context, generated_at,
+                                        external_findings=external_findings)
         repo.record_progress(version.id, owner, generation,
                              content_model_json=draft.cv.to_json(),
                              verifier_report_json=draft.trail_json())

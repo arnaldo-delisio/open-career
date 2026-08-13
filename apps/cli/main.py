@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from adapters.models.claude_code import ClaudeCodeAdapter, ModelCallError
+from adapters.models.codex_cli import CodexCliAdapter
 from adapters.storage.instance import backups_dir, db_path, instance_dir
 from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import migrate
@@ -195,19 +196,34 @@ def cmd_families(args: argparse.Namespace) -> None:
         conn.close()
 
 
+def _judge_models() -> dict:
+    """The judge adapter set (Gauntlet design, ratified decision 2): the
+    Truth Judge runs through the Codex CLI, a second model family independent
+    of the generator; Consistency and Writing stay on the house Claude Code
+    adapter."""
+    claude = ClaudeCodeAdapter()
+    return {"truth": CodexCliAdapter(), "consistency": claude, "writing": claude}
+
+
 def cmd_package(args: argparse.Namespace) -> None:
     conn = _connect()
     storage = LocalStorageAdapter(instance_dir())
     try:
         if args.package_command == "generate":
             _run_cli("package generate", lambda: package_cmd.run_generate(
-                conn, storage, ClaudeCodeAdapter(), args.family, args.pages, print))
+                conn, storage, ClaudeCodeAdapter(), args.family, args.pages, print,
+                judge_models=_judge_models(), findings_from=args.findings_from))
         elif args.package_command == "show":
             _run_cli("package show", lambda: package_cmd.run_show(
                 conn, args.id, args.json, print))
+        elif args.package_command == "gauntlet":
+            _run_cli("package gauntlet", lambda: package_cmd.run_gauntlet(
+                conn, storage, _judge_models(), args.id, args.json, print))
         elif args.package_command == "review":
             _run_cli("package review", lambda: package_cmd.run_review(
-                conn, storage, ClaudeCodeAdapter(), args.id, args.pages, input, print))
+                conn, storage, ClaudeCodeAdapter(), args.id, args.pages, input, print,
+                judge_models=_judge_models(),
+                accept_despite=args.accept_despite_gauntlet))
         elif args.package_command == "export":
             _run_cli("package export", lambda: package_cmd.run_export(
                 conn, storage, args.id, Path(args.out), print))
@@ -592,15 +608,31 @@ def main(argv: list[str] | None = None) -> None:
     p_pkg_gen.add_argument("family", help="family id or name")
     p_pkg_gen.add_argument("--pages", type=int, default=1,
                            help="page budget (default 1, hard max 2)")
+    p_pkg_gen.add_argument("--findings-from", default=None,
+                           help="version id whose blocking Gauntlet findings"
+                                " feed the drafting prompt as named failures")
     p_pkg_gen.set_defaults(func=cmd_package)
     p_pkg_show = package_sub.add_parser("show", help="content, traces, reports, gaps")
     p_pkg_show.add_argument("id", help="version id, package id, or family")
     p_pkg_show.add_argument("--json", action="store_true")
     p_pkg_show.set_defaults(func=cmd_package)
+    p_pkg_gauntlet = package_sub.add_parser(
+        "gauntlet", help="run stage zero plus the judges on a version"
+                         " (deliberate early repair / re-judging under a newer"
+                         " suite; review reconciles automatically)")
+    p_pkg_gauntlet.add_argument("id", help="version id")
+    p_pkg_gauntlet.add_argument("--json", action="store_true")
+    p_pkg_gauntlet.set_defaults(func=cmd_package)
     p_pkg_review = package_sub.add_parser(
-        "review", help="accept, or edit -> write-back loop -> regenerate")
+        "review", help="accept (gated by the Gauntlet), or edit -> write-back"
+                       " loop -> regenerate")
     p_pkg_review.add_argument("id", help="version id")
     p_pkg_review.add_argument("--pages", type=int, default=1)
+    p_pkg_review.add_argument("--accept-despite-gauntlet", default=None,
+                              metavar="REASON",
+                              help="record an override waiving a FAIL or"
+                                   " ATTENTION verdict (reason mandatory,"
+                                   " never silent)")
     p_pkg_review.set_defaults(func=cmd_package)
     p_pkg_export = package_sub.add_parser(
         "export", help="copy the PDF out of instance/ (defaults to the approved version)")

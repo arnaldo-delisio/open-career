@@ -1,0 +1,150 @@
+{
+  "education": [
+    {
+      "bullets": [
+        {
+          "fact_ids": [
+            "f-thesis"
+          ],
+          "text": "Wrote a thesis on graph search heuristics."
+        }
+      ],
+      "end_date": "2018-06",
+      "experience_id": "exp-uni",
+      "location": null,
+      "org": "University of Rotterdam",
+      "start_date": "2015-09",
+      "title": "BSc Computer Science"
+    }
+  ],
+  "experiences": [
+    {
+      "bullets": [
+        {
+          "fact_ids": [
+            "f-migration"
+          ],
+          "text": "Led the migration of the order service from Python 2 to Python 3."
+        },
+        {
+          "fact_ids": [
+            "f-costs"
+          ],
+          "text": "Worked on the team that reduced monthly hosting costs by 30 percent by consolidating three Kubernetes clusters into one."
+        },
+        {
+          "fact_ids": [
+            "f-latency"
+          ],
+          "text": "Rewrote the routing cache, cutting median API latency from 220 ms to 90 ms."
+        },
+        {
+          "fact_ids": [
+            "f-oncall"
+          ],
+          "text": "Maintained the legacy billing systems and kept uptime at 99.9 percent."
+        },
+        {
+          "fact_ids": [
+            "f-explore",
+            "f-platform"
+          ],
+          "text": "Worked on systems and pipelines, supporting the team and the clients."
+        }
+      ],
+      "end_date": "2024-06",
+      "experience_id": "exp-aurora",
+      "location": null,
+      "org": "Aurora Logistics",
+      "start_date": "2021-03",
+      "title": "Backend Engineer"
+    },
+    {
+      "bullets": [
+        {
+          "fact_ids": [
+            "f-clients"
+          ],
+          "text": "Built checkout integrations for two enterprise clients."
+        },
+        {
+          "fact_ids": [
+            "f-conversion"
+          ],
+          "text": "Ran A/B tests on the checkout flow, improving conversion."
+        }
+      ],
+      "end_date": "2021-02",
+      "experience_id": "exp-brightcart",
+      "location": null,
+      "org": "BrightCart",
+      "start_date": "2018-09",
+      "title": "Software Engineer"
+    }
+  ],
+  "header": {
+    "email": "maya.lindqvist@example.com",
+    "links": [],
+    "location": "Amsterdam, Netherlands",
+    "name": "Maya Lindqvist",
+    "phone": "+31 6 0000 0000"
+  },
+  "meta": {
+    "generated_at": "2026-08-10T12:00:00Z",
+    "role_family_id": "rf-backend",
+    "section_order": [
+      "contact",
+      "summary",
+      "skills",
+      "experience",
+      "projects",
+      "education"
+    ],
+    "strategy_version": 1
+  },
+  "projects": [
+    {
+      "bullets": [
+        {
+          "fact_ids": [
+            "f-openroute-maint"
+          ],
+          "text": "Maintains OpenRoute, an open-source route planning library, and reviews community pull requests."
+        },
+        {
+          "fact_ids": [
+            "f-openroute-adopt"
+          ],
+          "text": "OpenRoute was adopted by two Dutch logistics startups."
+        }
+      ],
+      "end_date": null,
+      "experience_id": "exp-openroute",
+      "location": null,
+      "org": "OpenRoute",
+      "start_date": "2022-01",
+      "title": "Maintainer"
+    }
+  ],
+  "skills": [
+    {
+      "capability_ids": [
+        "cap-python"
+      ],
+      "name": "Python"
+    },
+    {
+      "capability_ids": [
+        "cap-kubernetes"
+      ],
+      "name": "Kubernetes"
+    },
+    {
+      "capability_ids": [
+        "cap-api"
+      ],
+      "name": "API design"
+    }
+  ],
+  "summary": "Engineer supporting teams, systems, and clients across the Netherlands."
+}

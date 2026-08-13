@@ -69,9 +69,11 @@ points only to an APPROVED version and is the only notion of "current".
 (later phases add states additively), the immutable audit bundle
 (`content_model_json`, `context_snapshot_locator` + `input_context_hash`,
 `verifier_report_json`, `ats_report_json`, `artifact_locator` + `artifact_hash`),
-`failure_report_json` (always required for FAILED), `gauntlet_report_json` (the unwritten
-Gauntlet seam), and the generation lease (`lease_owner`, `lease_generation`,
-`lease_expires_at`). The state-transition table (GENERATING to VERIFIED or FAILED,
+`failure_report_json` (always required for FAILED), `gauntlet_report_json` (**superseded**
+by the Gauntlet design's append-only `gauntlet_runs` table, migration 0007: one nullable
+column cannot hold re-runs under newer suites without breaking write-once or blocking
+suite evolution; it stays NULL), and the generation lease (`lease_owner`,
+`lease_generation`, `lease_expires_at`). The state-transition table (GENERATING to VERIFIED or FAILED,
 VERIFIED to APPROVED), the status-dependent required fields, and write-once finalized
 bundle fields are enforced at `adapters/storage/sqlite_packages.py`, never by convention.
 Snapshot and artifact objects live under `instance/packages/<pkg>/v<N>/g<lease-gen>/`,
@@ -107,6 +109,54 @@ Raw fetched bodies (every response, error documents included) persist write-once
 committed snapshot's manifest references the 2xx pages, and degraded poll and probe
 outcomes reference every captured body from the run record.
 
+## Gauntlet tables (migration 0007)
+
+Spec: the scope's `decisions/gauntlet-design.md` (OC-9). `gauntlet_runs` is append-only
+and write-once at the repository seam (no update, no delete): one row per judging
+attempt, `seq` (the rowid alias, allocated inside the fenced completion transaction) the
+sole ordering authority, `suite_version` the code identity of the invariant rules, judge
+set, prompt versions, and schema versions, `complete` marking a terminal adjudication,
+and locator plus hash pairs binding the write-once policy snapshot, canonical
+prompt-input bytes, and raw completions under `instance/gauntlet/<run-id>/`.
+`resolved_models_json` records the per-judge observed model identity (never pre-stamped
+from config), and the run report additionally records `provider_versions`, the backend's
+own version string observed once per run.
+
+**Model identity is not always available, and is never invented.** The Claude Code CLI
+reports a resolved model in its JSON envelope; the Codex CLI, which backs the Truth Judge,
+does not: its `codex exec --json` event stream carries `thread.started`, `turn.started`,
+`item.completed` and `turn.completed` only, with no model field anywhere. That judge's
+identity is therefore recorded honestly as `unreported`, and what bounds the claim is the
+observed provider version (for example `codex-cli 0.145.0`). A demonstration table may pin
+such a judge as the literal `unreported` **only** together with an expected provider
+version: the pinned identity is the pair, a change in either half voids the table until
+re-demonstrated, and every record with an unreported identity carries a verbatim
+limitation line naming the judge. A table must never read as though the model were known. A partial unique index on `(package_version_id, suite_version) WHERE
+complete = 1` makes a second complete same-suite adjudication impossible regardless of
+application logic; the **effective run** for a suite is its complete run with the
+greatest `seq`. `gauntlet_reservations` gates admission (one active reservation per
+version and suite, fenced: atomic claim or takeover past expiry at the database clock,
+heartbeat renewal, conditional consume inside the run-insert transaction).
+`approval_decisions` makes every approval an explicit record: the effective current-suite
+run it cited (`gauntlet_run_id` NOT NULL), the verdict at decision time, and the override
+flag with its mandatory reason; the repository owns the current suite version and refuses
+approval with no effective current-suite run, override included. The `never_render`
+policy key (closed set, `packages/domain/policies.py`) feeds the stage-zero
+user-constraints check through the run's policy snapshot.
+
+**Judge-call security boundary, stated precisely.** The Truth Judge shells the Codex CLI
+inside a bubblewrap sandbox (`adapters/models/codex_cli.py`): only the binary's runtime
+paths, a minimal CODEX_HOME holding just the auth material, and a per-call temp workdir
+are mounted; without bwrap the adapter fails closed. The residual risk is that the
+sandboxed agent can still read its own auth token and has network, so a prompt injection
+could exfiltrate the token. Today that is acceptable because judge inputs are built
+exclusively from user-approved career state (the persisted context snapshot and content
+model; the runner asserts this provenance in code). TRIPWIRE: before any posting-derived
+or other third-party text enters judge inputs (the discovery phase), the Codex adapter
+must gain credential mediation or be replaced by a non-agentic completion endpoint;
+shipping discovery-fed judges over the current adapter would hand injected text a
+readable token and a network.
+
 ## Export/import
 
 `open-career export <file.json>` dumps `{"format": "open-career-export", "version": 1,
@@ -129,8 +179,10 @@ import loads them verbatim: exported files carry personal career data and belong
 instance files do not, so a JSON-restored instance has correct rows pointing at absent
 files. The complete movable unit is the archive form: `open-career export <file.zip>`
 writes `dump.json` plus `files/<locator>` for every instance file referenced by evidence
-locators and package artifacts (context snapshots and rendered PDFs); URL and
-absolute-path locators are external references and travel as rows only. Export refuses to
+locators, package artifacts (context snapshots and rendered PDFs), and Gauntlet run
+evidence (policy snapshots, prompt inputs, raw completions, each verified against its
+recorded hash); URL and absolute-path locators are external references and travel as
+rows only. Export refuses to
 bundle a referenced file that is missing, no longer matches its recorded hash, or whose
 row records no hash at all (a bundle must be hash-verifiable end to end). Import of a
 `.zip` proves everything **before** anything durable changes: every bundled file verified

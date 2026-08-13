@@ -207,6 +207,17 @@ def _referenced_files(tables: dict) -> dict[str, str | None]:
             add(row["context_snapshot_locator"], row.get("input_context_hash"))
         if row.get("artifact_locator"):
             add(row["artifact_locator"], row.get("artifact_hash"))
+    # Gauntlet judge evidence (spec: decisions/gauntlet-design.md, principle
+    # 6): every run's locator and hash pair travels and verifies exactly like
+    # package artifacts; an archive that omitted judge evidence would claim
+    # completeness it does not have.
+    for row in tables.get("gauntlet_runs", []):
+        for locator_col, hash_col in (
+                ("policy_snapshot_locator", "policy_snapshot_hash"),
+                ("prompt_inputs_locator", "prompt_inputs_hash"),
+                ("raw_completions_locator", "raw_completions_hash")):
+            if row.get(locator_col):
+                add(row[locator_col], row.get(hash_col))
     return refs
 
 

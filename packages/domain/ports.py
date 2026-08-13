@@ -232,10 +232,68 @@ class PackageRepository(ABC):
         failed from under its owner."""
 
     @abstractmethod
-    def approve(self, version_id: str, approved_at: str) -> None:
+    def approve(self, version_id: str, approved_at: str, override: bool = False,
+                override_reason: str | None = None) -> None:
         """VERIFIED -> APPROVED; sets packages.approved_version_id in the same
-        repository operation, validating same-package ownership."""
+        repository operation, validating same-package ownership. The approval
+        gate (spec: the scope's decisions/gauntlet-design.md): the repository
+        owns the current suite_version and resolves that suite's effective
+        Gauntlet run inside its own transaction; an effective terminal
+        current-suite run with verdict PASS is required, or override with a
+        mandatory non-empty reason waiving only a recorded FAIL or ATTENTION,
+        never missing adjudication. Every approval appends an
+        approval_decisions record."""
 
+    # -- Gauntlet (spec: the scope's decisions/gauntlet-design.md) ---------
+
+    @abstractmethod
+    def claim_gauntlet_reservation(self, version_id: str, suite_version: str,
+                                   owner_token: str, ttl_seconds: int) -> bool:
+        """Atomic admission for one run attempt: insert, or take over an
+        existing reservation only when its expiry is past the database clock.
+        Raises when a complete attempt already exists for the suite (further
+        same-suite attempts are rejected); returns False when a live worker
+        holds the reservation."""
+
+    @abstractmethod
+    def renew_gauntlet_reservation(self, version_id: str, suite_version: str,
+                                   owner_token: str, ttl_seconds: int) -> bool:
+        """One atomic conditional renewal (matching owner token and unexpired
+        expiry at the database clock); zero rows renewed permanently stops
+        the worker."""
+
+    @abstractmethod
+    def release_gauntlet_reservation(self, version_id: str, suite_version: str,
+                                     owner_token: str) -> bool:
+        """One atomic conditional release (matching owner token and unexpired
+        expiry), for a claimed attempt that failed before it could record a
+        run: the suite becomes immediately re-runnable instead of waiting out
+        the reservation. Fenced like the consume, so a stale worker can never
+        drop a successor's reservation."""
+
+    @abstractmethod
+    def insert_gauntlet_run(self, version_id: str, suite_version: str,
+                            owner_token: str, **fields):
+        """Append one write-once run row inside the same transaction that
+        conditionally consumes the reservation (matching owner token and
+        unexpired expiry); a zero-row consume discards the result entirely
+        and inserts nothing. The attempt number is allocated here. Append
+        only: no update, no delete."""
+
+    @abstractmethod
+    def get_gauntlet_run(self, run_id: str): ...
+
+    @abstractmethod
+    def list_gauntlet_runs(self, version_id: str) -> list:
+        """All runs for a version, newest first by seq."""
+
+    @abstractmethod
+    def effective_gauntlet_run(self, version_id: str, suite_version: str):
+        """The suite's effective run: its complete run with the greatest seq
+        (seq is the sole ordering authority), or None."""
+
+    @abstractmethod
+    def list_approval_decisions(self, version_id: str) -> list: ...
 
 
 class StorageObjectExistsError(RuntimeError):
@@ -548,3 +606,21 @@ class ModelAdapter(ABC):
     @abstractmethod
     def complete(self, prompt: str) -> str:
         """Run one prompt, return the model's text result."""
+
+    def complete_with_meta(self, prompt: str) -> tuple[str, dict]:
+        """Run one prompt, return (text, metadata). Metadata carries the
+        provider-reported resolved model identity under 'model' when the
+        backend reports one. Deliberately a concrete default, not a second
+        abstract method (the Gauntlet design's model-identity rule): existing
+        complete-only implementations and test doubles stay instantiable and
+        report the identity honestly as unreported."""
+        return self.complete(prompt), {"model": "unreported"}
+
+    def provider_version(self) -> str:
+        """The backend's own version string, verbatim, observed once per run.
+        This is PROVIDER identity, not model identity: where a backend reports
+        no resolved model (the Codex CLI does not), the recorded provider
+        version is what bounds a demonstrated claim, and a change in it voids
+        a demonstration table exactly as a model-set change does. Never
+        inferred: a backend that cannot be asked reports 'unavailable'."""
+        return "unavailable"
