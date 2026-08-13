@@ -1,7 +1,8 @@
 """Common Crawl CDX harvest bootstrap (OC-37 §2): the one-time, re-runnable
 registry seed. Run manually, never from the polling worker.
 
-Queries the CDX index for the five ATS URL patterns, regex-extracts tenant
+Queries the CDX index for the five ATS' board URL patterns (six patterns:
+Greenhouse publishes tenants on a legacy and a current host), regex-extracts tenant
 slugs, dedupes across snapshots, and inserts registry candidate rows (origin
 'harvest'; enabled only after a §2 probe). No slug brute-forcing: harvest over
 enumeration, locked.
@@ -32,19 +33,28 @@ from domain.ids import new_id  # noqa: E402
 
 CDX_HOST = "https://index.commoncrawl.org"
 
-# The five URL patterns (§2), each with its slug-extraction regex. Slugs are
-# path segment one; query strings, fragments, and deeper paths are ignored.
-URL_PATTERNS: dict[str, tuple[str, re.Pattern]] = {
-    "greenhouse": ("boards.greenhouse.io/*", re.compile(
-        r"^https?://(?:www\.)?boards\.greenhouse\.io/([A-Za-z0-9_-]+)(?:[/?#]|$)")),
-    "lever": ("jobs.lever.co/*", re.compile(
-        r"^https?://(?:www\.)?jobs\.lever\.co/([A-Za-z0-9_-]+)(?:[/?#]|$)")),
-    "ashby": ("jobs.ashbyhq.com/*", re.compile(
-        r"^https?://(?:www\.)?jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)(?:[/?#]|$)")),
-    "workable": ("apply.workable.com/*", re.compile(
-        r"^https?://(?:www\.)?apply\.workable\.com/([A-Za-z0-9_-]+)(?:[/?#]|$)")),
-    "smartrecruiters": ("careers.smartrecruiters.com/*", re.compile(
-        r"^https?://(?:www\.)?careers\.smartrecruiters\.com/([A-Za-z0-9_-]+)(?:[/?#]|$)")),
+# The URL patterns (§2), each with its slug-extraction regex, grouped by the
+# ATS they belong to. Slugs are path segment one; query strings, fragments,
+# and deeper paths are ignored. An ATS may publish tenants on more than one
+# board host: Greenhouse migrated from boards.greenhouse.io to
+# job-boards.greenhouse.io (design §2 amendment 2026-08-13) and both hosts are
+# harvested into the one 'greenhouse' ats_type, so a tenant present on both
+# collapses to a single registry row.
+URL_PATTERNS: dict[str, list[tuple[str, re.Pattern]]] = {
+    "greenhouse": [
+        ("boards.greenhouse.io/*", re.compile(
+            r"^https?://(?:www\.)?boards\.greenhouse\.io/([A-Za-z0-9_-]+)(?:[/?#]|$)")),
+        ("job-boards.greenhouse.io/*", re.compile(
+            r"^https?://(?:www\.)?job-boards\.greenhouse\.io/([A-Za-z0-9_-]+)(?:[/?#]|$)")),
+    ],
+    "lever": [("jobs.lever.co/*", re.compile(
+        r"^https?://(?:www\.)?jobs\.lever\.co/([A-Za-z0-9_-]+)(?:[/?#]|$)"))],
+    "ashby": [("jobs.ashbyhq.com/*", re.compile(
+        r"^https?://(?:www\.)?jobs\.ashbyhq\.com/([A-Za-z0-9_.-]+)(?:[/?#]|$)"))],
+    "workable": [("apply.workable.com/*", re.compile(
+        r"^https?://(?:www\.)?apply\.workable\.com/([A-Za-z0-9_-]+)(?:[/?#]|$)"))],
+    "smartrecruiters": [("careers.smartrecruiters.com/*", re.compile(
+        r"^https?://(?:www\.)?careers\.smartrecruiters\.com/([A-Za-z0-9_-]+)(?:[/?#]|$)"))],
 }
 
 # Path segments that are vendor surface, not tenants.
@@ -64,16 +74,19 @@ USER_AGENT = "open-career-harvest/0.1 (+https://github.com/arnaldodelisio/open-c
 def extract_slugs(urls, ats_type: str) -> set[str]:
     """Regex-extract tenant slugs for one ATS; dedupe across snapshots is the
     set itself (URLs recur across many crawls)."""
-    _, pattern = URL_PATTERNS[ats_type]
+    patterns = [pattern for _, pattern in URL_PATTERNS[ats_type]]
     slugs = set()
     for url in urls:
-        match = pattern.match(url.strip())
-        if not match:
-            continue
-        slug = match.group(1)
-        if slug.lower() in NON_TENANT_SEGMENTS:
-            continue
-        slugs.add(slug.lower())
+        stripped = url.strip()
+        for pattern in patterns:
+            match = pattern.match(stripped)
+            if not match:
+                continue
+            slug = match.group(1)
+            if slug.lower() in NON_TENANT_SEGMENTS:
+                break
+            slugs.add(slug.lower())
+            break
     return slugs
 
 
@@ -145,10 +158,12 @@ def main(argv=None) -> None:
             slugs_by_ats[ats_type] = extract_slugs(urls, ats_type)
     else:
         for ats_type in ats_types:
-            pattern, _ = URL_PATTERNS[ats_type]
-            print(f"querying {args.index} for {pattern} ...", file=sys.stderr)
-            slugs_by_ats[ats_type] = extract_slugs(
-                cdx_urls(args.index, pattern, args.page_limit), ats_type)
+            slugs: set[str] = set()
+            for host_pattern, _ in URL_PATTERNS[ats_type]:
+                print(f"querying {args.index} for {host_pattern} ...", file=sys.stderr)
+                slugs |= extract_slugs(
+                    cdx_urls(args.index, host_pattern, args.page_limit), ats_type)
+            slugs_by_ats[ats_type] = slugs
 
     path = db_path()
     if not path.exists():

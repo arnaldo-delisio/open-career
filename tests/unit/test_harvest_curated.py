@@ -50,6 +50,35 @@ def test_extract_slugs_covers_all_five_patterns():
                                  "smartrecruiters"}
 
 
+def test_greenhouse_harvests_both_board_hosts_into_one_ats_type():
+    """Greenhouse migrated boards.greenhouse.io -> job-boards.greenhouse.io
+    (design §2 amendment 2026-08-13). Both hosts are harvested, the blocklist
+    applies to both, and a tenant on both collapses to one slug."""
+    hosts = [host for host, _ in URL_PATTERNS["greenhouse"]]
+    assert hosts == ["boards.greenhouse.io/*", "job-boards.greenhouse.io/*"]
+    urls = [
+        "https://boards.greenhouse.io/onboth",
+        "https://job-boards.greenhouse.io/onboth",
+        "https://job-boards.greenhouse.io/OnBoth/jobs/99",
+        "https://job-boards.greenhouse.io/newonly?gh_src=x",
+        "https://job-boards.greenhouse.io/embed/job_board?for=onboth",
+        "https://job-boards.greenhouse.io.evil.com/fake",
+    ]
+    assert extract_slugs(urls, "greenhouse") == {"onboth", "newonly"}
+
+
+def test_both_greenhouse_hosts_dedupe_to_one_registry_row(conn):
+    """Dedup is the ats_type/slug key, so the same tenant seen on the legacy
+    and the current host inserts once and re-runs as already-present."""
+    slugs = extract_slugs(["https://boards.greenhouse.io/onboth",
+                           "https://job-boards.greenhouse.io/onboth"], "greenhouse")
+    inserted, skipped = insert_candidates(conn, {"greenhouse": slugs}, dry_run=False)
+    assert (inserted, skipped) == (1, 0)
+    rows = SqliteSourceRegistryRepository(conn).list_all()
+    assert [(s.ats_type, s.tenant_slug) for s in rows] == [("greenhouse", "onboth")]
+    assert insert_candidates(conn, {"greenhouse": slugs}, dry_run=False) == (0, 1)
+
+
 def test_extract_slugs_dedupes_across_snapshots_and_skips_vendor_paths():
     urls = ["https://boards.greenhouse.io/acme"] * 50 + [
         "https://boards.greenhouse.io/embed/job_board?for=acme",
