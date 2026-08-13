@@ -353,6 +353,18 @@ def test_smartrecruiters_totalfound_mismatch_degrades():
 EMPTY_POSTINGS = {"offset": 0, "limit": 100, "totalFound": 0, "content": []}
 
 
+def test_smartrecruiters_boolean_totalfound_degrades_the_poll():
+    """bool subclasses int: a JSON true alongside one posting would otherwise
+    satisfy both the shape check and the len(jobs) == totalFound completeness
+    check, committing a malformed feed as a complete snapshot."""
+    body = fixture("smartrecruiters_postings.json")
+    body["content"] = body["content"][:1]
+    body["totalFound"] = True
+    fetcher, _ = make_fetcher({"/postings": (200, body)})
+    with pytest.raises(AdapterDegradedError):
+        SmartRecruitersAdapter(fetcher).poll("Acme1")
+
+
 def smartrecruiters_transport(*, tenant_exists: bool, postings=None):
     """The vendor's real shapes (verified live 2026-08-13): the postings
     collection answers 200 totalFound 0 for ANY company id, real or invented,

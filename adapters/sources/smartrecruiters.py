@@ -57,7 +57,10 @@ class SmartRecruitersAdapter(BaseSourceAdapter):
                    f"/postings?limit={PAGE_SIZE}&offset={offset}")
             page = self._fetcher.fetch_json(url)
             require(isinstance(page, dict) and isinstance(page.get("content"), list)
-                    and isinstance(page.get("totalFound"), int),
+                    # bool subclasses int, so a JSON true would otherwise pass
+                    # as a count and satisfy the completeness check below.
+                    and isinstance(page.get("totalFound"), int)
+                    and not isinstance(page.get("totalFound"), bool),
                     "smartrecruiters payload lacks 'content'/'totalFound'")
             if total is None:
                 total = page["totalFound"]
