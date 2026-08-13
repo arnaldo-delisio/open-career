@@ -10,6 +10,7 @@ Resolution protocol lands and can prove a confirmed GLOBAL scope.
 import json
 import sqlite3
 
+from adapters.storage.epoch import bump_dependency_epoch
 from domain.entities import ProfileFieldWrite
 from domain.ids import new_id
 from domain.ports import UserProfileRepository
@@ -61,6 +62,7 @@ class SqliteUserProfileRepository(UserProfileRepository):
                 " source, resolution_id) VALUES (?, ?, ?, ?, ?, ?)",
                 (new_id("pfw"), field, old_value, value, source, resolution_id),
             )
+            bump_dependency_epoch(self._conn)  # OC-37 §5: gate results go stale
 
     def list_writes(self) -> list[ProfileFieldWrite]:
         rows = self._conn.execute(

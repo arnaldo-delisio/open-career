@@ -13,6 +13,11 @@ ALL_TABLES = {
     "role_families", "career_goals", "strategy_versions",
     "strategy_role_family_allocations", "user_profile", "profile_field_writes",
     "packages", "package_versions", "user_policies", "policy_writes",
+    # Discovery storage (0006, OC-37).
+    "sources", "source_supersessions", "snapshots", "opportunities",
+    "opportunity_versions", "gate_verdicts", "suspect_cohorts",
+    "suspect_cohort_members", "promotion_queue", "discovery_runs",
+    "dependency_epoch", "discovery_lease",
 }
 
 

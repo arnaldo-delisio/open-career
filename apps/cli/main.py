@@ -36,6 +36,7 @@ from domain.profile import InvalidProfileValueError, UnknownProfileFieldError
 from adapters.storage.family_strategy import StrategyError
 from adapters.storage.sqlite_entities import SqliteRoleFamilyRepository
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
+from apps.cli import discover as discover_cli
 from apps.cli import families as families_cli
 from apps.cli import interview as interview_cli
 from apps.cli import package_cmd
@@ -159,7 +160,7 @@ def cmd_onboard(args: argparse.Namespace) -> None:
 _INTERVIEW_COMMANDS = ("onboard", "deepen", "stories")
 
 _CLI_ERRORS = (StrategyError, FamilyProposalError, CvModelError, PackageStateError,
-               package_cmd.PackageCliError,
+               package_cmd.PackageCliError, discover_cli.DiscoverCliError,
                ModelCallError, ModelUnavailableError)
 
 
@@ -214,6 +215,67 @@ def cmd_package(args: argparse.Namespace) -> None:
                 conn, storage, print))
     finally:
         conn.close()
+
+
+def cmd_discover(args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        if args.discover_command == "run":
+            _run_cli("discover run", lambda: discover_cli.run_run(
+                conn, LocalStorageAdapter(instance_dir()), ClaudeCodeAdapter(),
+                print, as_json=args.json))
+        elif args.discover_command == "sources":
+            _cmd_discover_sources(conn, args)
+        elif args.discover_command == "opportunities":
+            _run_cli("discover opportunities", lambda: discover_cli.run_opportunities(
+                conn, print, as_json=args.json, status=args.status,
+                gate=args.gate, source=args.source))
+        elif args.discover_command == "show":
+            _run_cli("discover show", lambda: discover_cli.run_show(
+                conn, args.id, print, as_json=args.json))
+        elif args.discover_command == "duplicates":
+            _run_cli("discover duplicates", lambda: discover_cli.run_duplicates(
+                conn, print, as_json=args.json))
+        elif args.discover_command == "queue":
+            if args.queue_command == "list":
+                _run_cli("discover queue list", lambda: discover_cli.run_queue_list(
+                    conn, print, as_json=args.json, state=args.state))
+            elif args.queue_command == "retry":
+                _run_cli("discover queue retry", lambda: discover_cli.run_queue_retry(
+                    conn, args.id, print))
+    finally:
+        conn.close()
+
+
+def _cmd_discover_sources(conn, args: argparse.Namespace) -> None:
+    command = args.sources_command
+    if command == "list":
+        _run_cli("discover sources list", lambda: discover_cli.run_sources_list(
+            conn, print, as_json=args.json, status=args.status))
+    elif command == "add":
+        _run_cli("discover sources add", lambda: discover_cli.run_sources_add(
+            conn, args.ats_type, args.tenant_slug, args.company, print))
+    elif command == "enable":
+        _run_cli("discover sources enable",
+                 lambda: discover_cli.run_sources_enable(
+                     conn, args.id, print, LocalStorageAdapter(instance_dir())))
+    elif command == "disable":
+        _run_cli("discover sources disable",
+                 lambda: discover_cli.run_sources_disable(conn, args.id, print))
+    elif command == "retry":
+        _run_cli("discover sources retry", lambda: discover_cli.run_sources_retry(
+            conn, args.id, print))
+    elif command == "set-meta":
+        _run_cli("discover sources set-meta", lambda: discover_cli.run_sources_set_meta(
+            conn, args.id, args.field, args.value, print))
+    elif command == "supersede":
+        _run_cli("discover sources supersede",
+                 lambda: discover_cli.run_sources_supersede(
+                     conn, args.old_id, args.new_id, args.notes, print))
+    elif command == "supersessions":
+        _run_cli("discover sources supersessions",
+                 lambda: discover_cli.run_sources_supersessions(
+                     conn, print, as_json=args.json))
 
 
 def cmd_deepen(_args: argparse.Namespace) -> None:
@@ -537,6 +599,81 @@ def main(argv: list[str] | None = None) -> None:
     p_pkg_export.set_defaults(func=cmd_package)
     package_sub.add_parser("recover", help="claim expired generation leases, list orphans"
                            ).set_defaults(func=cmd_package)
+
+    p_discover = sub.add_parser(
+        "discover", help="autonomous opportunity discovery (OC-37)")
+    discover_sub = p_discover.add_subparsers(dest="discover_command", required=True)
+    p_d_run = discover_sub.add_parser(
+        "run", help="one budgeted discovery run (probe, poll, gate, extract, judge)")
+    p_d_run.add_argument("--json", action="store_true")
+    p_d_run.set_defaults(func=cmd_discover)
+    p_d_sources = discover_sub.add_parser("sources", help="source registry")
+    sources_sub = p_d_sources.add_subparsers(dest="sources_command", required=True)
+    p_ds_list = sources_sub.add_parser("list", help="list registry sources")
+    p_ds_list.add_argument("--json", action="store_true")
+    p_ds_list.add_argument("--status", choices=("candidate", "enabled", "disabled"))
+    p_ds_list.set_defaults(func=cmd_discover)
+    p_ds_add = sources_sub.add_parser(
+        "add", help="register a tenant manually (candidate until probed)")
+    p_ds_add.add_argument("ats_type", choices=(
+        "greenhouse", "lever", "ashby", "workable", "smartrecruiters"))
+    p_ds_add.add_argument("tenant_slug")
+    p_ds_add.add_argument("--company", default=None)
+    p_ds_add.set_defaults(func=cmd_discover)
+    for name, help_text in (("enable", "probe the source and enable it only"
+                                       " on a passing healthcheck"),
+                            ("disable", "disable a source"),
+                            ("retry", "schedule an immediate re-probe of a"
+                                      " rot-disabled source")):
+        p_ds = sources_sub.add_parser(name, help=help_text)
+        p_ds.add_argument("id")
+        p_ds.set_defaults(func=cmd_discover)
+    p_ds_meta = sources_sub.add_parser(
+        "set-meta", help="reviewed company metadata (industry, company_stage,"
+                         " company_size_band); hard exclusions consume these")
+    p_ds_meta.add_argument("id")
+    p_ds_meta.add_argument("field", choices=("industry", "company_stage",
+                                             "company_size_band"))
+    p_ds_meta.add_argument("value", help="empty string clears the field")
+    p_ds_meta.set_defaults(func=cmd_discover)
+    p_ds_sup = sources_sub.add_parser(
+        "supersede", help="record a reviewed ATS-migration/rename link")
+    p_ds_sup.add_argument("old_id")
+    p_ds_sup.add_argument("new_id")
+    p_ds_sup.add_argument("--notes", default=None)
+    p_ds_sup.set_defaults(func=cmd_discover)
+    p_ds_sups = sources_sub.add_parser(
+        "supersessions", help="review recorded supersessions")
+    p_ds_sups.add_argument("--json", action="store_true")
+    p_ds_sups.set_defaults(func=cmd_discover)
+    p_d_opps = discover_sub.add_parser(
+        "opportunities", help="list opportunities with filters")
+    p_d_opps.add_argument("--json", action="store_true")
+    p_d_opps.add_argument("--status", choices=("open", "closed", "reopened"))
+    p_d_opps.add_argument("--gate", choices=("pass", "fail", "none", "stale"))
+    p_d_opps.add_argument("--source", default=None)
+    p_d_opps.set_defaults(func=cmd_discover)
+    p_d_show = discover_sub.add_parser(
+        "show", help="versions, gate reasons (skips included), staleness"
+                     " signals as disclosed observations")
+    p_d_show.add_argument("id")
+    p_d_show.add_argument("--json", action="store_true")
+    p_d_show.set_defaults(func=cmd_discover)
+    p_d_dups = discover_sub.add_parser(
+        "duplicates", help="report-only cross-source suspected duplicates"
+                           " (exact field match, computed on read, never merged)")
+    p_d_dups.add_argument("--json", action="store_true")
+    p_d_dups.set_defaults(func=cmd_discover)
+    p_d_queue = discover_sub.add_parser("queue", help="promotion queue")
+    queue_sub = p_d_queue.add_subparsers(dest="queue_command", required=True)
+    p_dq_list = queue_sub.add_parser("list", help="list queue rows")
+    p_dq_list.add_argument("--json", action="store_true")
+    p_dq_list.add_argument("--state", default=None)
+    p_dq_list.set_defaults(func=cmd_discover)
+    p_dq_retry = queue_sub.add_parser(
+        "retry", help="retry a terminal failed row after remediation")
+    p_dq_retry.add_argument("id")
+    p_dq_retry.set_defaults(func=cmd_discover)
 
     p_export = sub.add_parser(
         "export", help="dump the instance (.json = database only,"

@@ -11,6 +11,7 @@ family-mutation-plus-version mint runs in this one seam instead."""
 import json
 import sqlite3
 
+from adapters.storage.epoch import bump_dependency_epoch
 from domain.entities import RoleFamily
 from domain.ids import new_id
 
@@ -48,6 +49,7 @@ def _insert_version(conn: sqlite3.Connection, objective: str,
             "INSERT INTO strategy_role_family_allocations"
             " (strategy_version_id, role_family_id, allocation) VALUES (?, ?, ?)",
             (version_id, family_id, allocation))
+    bump_dependency_epoch(conn)  # OC-37 §5: gate results go stale
     return version
 
 

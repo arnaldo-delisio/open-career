@@ -1,10 +1,11 @@
-"""Boundary test: the domain layer imports neither FastAPI nor sqlite3."""
+"""Boundary test: the domain layer imports neither FastAPI nor sqlite3 nor
+httpx (discovery adapters do IO; the domain never does)."""
 
 import ast
 from pathlib import Path
 
 DOMAIN_DIR = Path(__file__).resolve().parents[2] / "packages" / "domain"
-FORBIDDEN = {"fastapi", "sqlite3"}
+FORBIDDEN = {"fastapi", "sqlite3", "httpx"}
 
 
 def _imported_modules(source: str) -> set[str]:
@@ -17,7 +18,7 @@ def _imported_modules(source: str) -> set[str]:
     return names
 
 
-def test_domain_imports_no_fastapi_or_sqlite3():
+def test_domain_imports_no_io_library():
     files = list(DOMAIN_DIR.rglob("*.py"))
     assert files, "domain package not found"
     for f in files:

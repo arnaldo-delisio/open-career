@@ -237,6 +237,7 @@ class PackageRepository(ABC):
         repository operation, validating same-package ownership."""
 
 
+
 class StorageObjectExistsError(RuntimeError):
     """A write-once object already exists at the locator; nothing overwrites."""
 
@@ -284,6 +285,255 @@ class PdfTextExtractor(ABC):
 
     @abstractmethod
     def extract_layout(self, pdf_bytes: bytes) -> str: ...
+
+
+class SourceAdapter(ABC):
+    """One port for all five public-API sources (OC-37 §1; blueprint §10.3
+    shape). Implementations live in adapters/sources/ and may call only the
+    whitelisted public API hosts (OC-1, a tested constant); the domain never
+    imports an HTTP library."""
+
+    @abstractmethod
+    def list_jobs(self, tenant_slug: str) -> list: ...
+
+    @abstractmethod
+    def fetch_job(self, tenant_slug: str, external_job_id: str): ...
+
+    @abstractmethod
+    def normalize(self, raw_job) -> dict: ...
+
+    @abstractmethod
+    def healthcheck(self, tenant_slug: str) -> bool: ...
+
+
+class SourceRegistryRepository(ABC):
+    """The §2 registry: stable source identity, mutable tenant locator,
+    scheduler state from stored DB timestamps, reviewed company metadata with
+    per-field provenance, supersession records reviewed via CLI."""
+
+    @abstractmethod
+    def add(self, source) -> None: ...
+
+    @abstractmethod
+    def get(self, source_id: str): ...
+
+    @abstractmethod
+    def list_all(self) -> list: ...
+
+    @abstractmethod
+    def set_status(self, source_id: str, status: str) -> None: ...
+
+    @abstractmethod
+    def set_reviewed_metadata(self, source_id: str, field: str, value: str | None,
+                              origin: str) -> None:
+        """Write one reviewed metadata field with its provenance; the only
+        write path (curation or explicit CLI edit), never a classifier."""
+
+    @abstractmethod
+    def record_supersession(self, supersession) -> None: ...
+
+    @abstractmethod
+    def list_supersessions(self) -> list: ...
+
+    @abstractmethod
+    def record_probe_outcome(self, source_id: str, success: bool,
+                             next_probe_at: str | None) -> None:
+        """One probe's scheduler effects: success enables and resets attempt
+        state; failure records the caller-computed backoff time."""
+
+    @abstractmethod
+    def record_poll_outcome(self, source_id: str, outcome: str,
+                            next_poll_at: str | None = None,
+                            rot_threshold: int = 5,
+                            next_probe_at: str | None = None) -> None:
+        """One poll's scheduler effects: success/degraded/oversized/deferred.
+        Degraded increments consecutive failures and disables at the rot
+        threshold; oversized and deferred touch no health or rot state."""
+
+
+class SnapshotRepository(ABC):
+    """Immutable committed snapshots (§1): commit assigns the next per-source
+    sequence number transactionally; nothing updates or deletes a row."""
+
+    @abstractmethod
+    def commit(self, source_id: str, raw_locator: str, content_hash: str,
+               completion_json: str, posting_count: int,
+               remote_version_token: str | None = None,
+               run_id: str | None = None): ...
+
+    @abstractmethod
+    def get(self, snapshot_id: str): ...
+
+    @abstractmethod
+    def list_for_source(self, source_id: str) -> list: ...
+
+    @abstractmethod
+    def latest_for_source(self, source_id: str): ...
+
+
+class OpportunityRepository(ABC):
+    """Opportunities and their append-only versions (§3). Identity is
+    (source_id, external_job_id); the four state fields have four owners and
+    apply_closure_plan never touches human_action."""
+
+    @abstractmethod
+    def add(self, opportunity) -> None: ...
+
+    @abstractmethod
+    def get(self, opportunity_id: str): ...
+
+    @abstractmethod
+    def get_by_key(self, source_id: str, external_job_id: str): ...
+
+    @abstractmethod
+    def list_for_source(self, source_id: str) -> list: ...
+
+    @abstractmethod
+    def add_version(self, version) -> None:
+        """Append a version row and point current_version_id at it."""
+
+    @abstractmethod
+    def list_versions(self, opportunity_id: str) -> list: ...
+
+    @abstractmethod
+    def apply_closure_plan(self, plan, observed_at: str) -> None:
+        """Apply one snapshot's ClosurePlan in a single transaction: presence
+        resets and reopens, streak increments, closures with their confirming
+        snapshot ids, cohort resolution, and new-cohort creation."""
+
+    @abstractmethod
+    def pending_cohort_for_source(self, source_id: str):
+        """The unresolved suspect cohort as a closure.PendingCohort, or None."""
+
+    @abstractmethod
+    def record_gate_verdict(self, verdict) -> None:
+        """Append the auditable gate verdict and point latest_gate_verdict_id
+        at it; a gated-out opportunity is stored, never dropped."""
+
+    @abstractmethod
+    def get_gate_verdict(self, verdict_id: str): ...
+
+    @abstractmethod
+    def set_proposed_action(self, opportunity_id: str, action: str,
+                            version_id: str | None = None,
+                            epoch: int | None = None) -> None:
+        """Persist the machine proposal with its version and epoch pin;
+        readers must never present a stale-pinned proposal as current."""
+
+    @abstractmethod
+    def set_human_action(self, opportunity_id: str, action: str | None) -> None: ...
+
+    @abstractmethod
+    def set_requirement_proposals(self, opportunity_id: str, proposals_json: str) -> None:
+        """Persist extracted requirement phrases as proposals pinned to their
+        version, never verified graph edges (§5)."""
+
+    @abstractmethod
+    def set_judged_fit(self, opportunity_id: str, judged_fit_json: str) -> None: ...
+
+    @abstractmethod
+    def list_backlog_pending(self) -> list: ...
+
+    @abstractmethod
+    def list_open_with_stale_gate(self, current_epoch: int) -> list:
+        """Open opportunities whose latest gate verdict predates the current
+        dependency epoch, oldest verdicts first (§5 re-gating)."""
+
+    @abstractmethod
+    def list_filtered(self, availability: str | None = None,
+                      gate: str | None = None,
+                      source_id: str | None = None) -> list: ...
+
+    @abstractmethod
+    def promote_from_backlog(self, opportunity_id: str):
+        """Transactional promotion out of the observed-ungated backlog (§4):
+        returns the current open version to gate, marking the row gated; a
+        closed or superseded observation is discarded with its reason
+        recorded and None returned."""
+
+
+class PromotionQueueRepository(ABC):
+    """Version-pinned queue rows with durable states (§4). Claiming re-checks
+    the pinned version is still the current open version, else releases the
+    row as superseded; supersession cancels unfinished rows atomically."""
+
+    @abstractmethod
+    def enqueue(self, opportunity_id: str, version_id: str, lane_rank: int,
+                first_seen: str, epoch: int):
+        """Insert with the frozen ordering key and the next enqueue sequence;
+        merging by (opportunity, version) key returns the existing row."""
+
+    @abstractmethod
+    def get(self, row_id: str): ...
+
+    @abstractmethod
+    def list_rows(self, state: str | None = None) -> list: ...
+
+    @abstractmethod
+    def pending_for_stage(self, state: str, current_run_seq: int) -> list:
+        """Claimable rows in a stage state: retry backoff respected, terminal
+        and superseded rows excluded."""
+
+    @abstractmethod
+    def claim(self, row_id: str, current_epoch: int,
+              owner_token: str | None = None, fence: int | None = None):
+        """Claim a row for work: verifies the pinned version is still the
+        current open version and the epoch is current, else marks the row
+        superseded and returns None. With owner_token and fence, the claim is
+        a durable exclusive marker set by one conditional update before any
+        model call; a row claimed under a fence that is no longer the live
+        lease is claimable again."""
+
+    @abstractmethod
+    def transition(self, row_id: str, new_state: str, coverage_bp: int | None = None) -> None: ...
+
+    @abstractmethod
+    def release_failed(self, row_id: str, reason: str, current_run_seq: int) -> None:
+        """Bounded retry (§4): re-release with backoff while attempts remain,
+        else the terminal auditable failed state."""
+
+    @abstractmethod
+    def retry_failed(self, row_id: str, current_run_seq: int) -> None:
+        """Explicit CLI retry of a terminal failed row after remediation."""
+
+    @abstractmethod
+    def supersede_for_opportunity(self, opportunity_id: str, current_version_id: str | None,
+                                  reason: str) -> None:
+        """Cancel unfinished rows not pinned to the current open version (all
+        rows when the opportunity closed, current_version_id None)."""
+
+    @abstractmethod
+    def supersede_stale_epochs(self, current_epoch: int, reason: str) -> None: ...
+
+
+class DiscoveryRunRepository(ABC):
+    """Run records (§4): budget locked and recorded at start, spend and
+    per-source outcomes at finish, monotonic run_seq for retry backoff."""
+
+    @abstractmethod
+    def start(self, budget_json: str, epoch: int): ...
+
+    @abstractmethod
+    def finish(self, run_id: str, status: str, spend_json: str,
+               source_outcomes_json: str, exhausted_stage: str | None = None) -> None: ...
+
+    @abstractmethod
+    def get(self, run_id: str): ...
+
+    @abstractmethod
+    def list_all(self) -> list: ...
+
+
+class DependencyEpochRepository(ABC):
+    """The single dependency-epoch integer (§5), bumped by any audited write
+    to user policies, profile, active role families/strategy, or the eligible
+    edge set; gate and rank results record the epoch they ran under."""
+
+    @abstractmethod
+    def current(self) -> int: ...
+
+    @abstractmethod
+    def bump(self) -> int: ...
 
 
 class ModelUnavailableError(RuntimeError):

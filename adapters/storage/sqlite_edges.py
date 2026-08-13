@@ -4,7 +4,13 @@ constraints and the partial unique index backstop."""
 
 import sqlite3
 
-from domain.edges import EDGE_VOCABULARY, UNKNOWN_TYPE, CareerEdge
+from adapters.storage.epoch import bump_dependency_epoch
+from domain.edges import (
+    EDGE_VOCABULARY,
+    UNKNOWN_TYPE,
+    CareerEdge,
+    is_generation_eligible,
+)
 from domain.ports import CareerEdgeRepository
 
 # Entity type -> table holding it, for endpoint existence checks (also used by
@@ -65,6 +71,9 @@ class SqliteCareerEdgeRepository(CareerEdgeRepository):
                  edge.provenance, edge.derived_from_fact_id, edge.created_by,
                  edge.user_verified),
             )
+            if is_generation_eligible(edge):
+                # OC-37 §5: the eligible edge set changed; gate results go stale.
+                bump_dependency_epoch(self._conn)
         return self._get(edge.id)
 
     def _require_endpoint(self, entity_type: str, entity_id: str) -> None:

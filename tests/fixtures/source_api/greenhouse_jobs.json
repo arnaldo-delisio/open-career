@@ -1,0 +1,27 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4455667788",
+      "internal_job_id": 2233445,
+      "location": {"name": "Milan, Italy"},
+      "metadata": [],
+      "id": 4455667788,
+      "updated_at": "2026-07-30T12:00:00-04:00",
+      "requisition_id": "R-1042",
+      "title": "Senior Backend Engineer",
+      "content": "&lt;p&gt;We are hiring a Senior Backend Engineer. Requirements: 5+ years Python, PostgreSQL, Kubernetes. Fluent English.&lt;/p&gt;"
+    },
+    {
+      "absolute_url": "https://boards.greenhouse.io/acme/jobs/4455667799",
+      "internal_job_id": 2233446,
+      "location": {"name": "Remote"},
+      "metadata": [],
+      "id": 4455667799,
+      "updated_at": "2026-08-01T09:30:00-04:00",
+      "requisition_id": "R-1043",
+      "title": "Engineering Manager, Platform",
+      "content": "&lt;p&gt;Lead the platform team. Requirements: people management, distributed systems, incident response.&lt;/p&gt;"
+    }
+  ],
+  "meta": {"total": 2}
+}

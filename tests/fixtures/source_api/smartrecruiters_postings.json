@@ -1,0 +1,43 @@
+{
+  "totalFound": 2,
+  "offset": 0,
+  "limit": 100,
+  "content": [
+    {
+      "id": "744000012345678",
+      "uuid": "c0ffee00-1234-5678-9abc-def012345678",
+      "name": "Mid-Level Frontend Developer",
+      "refNumber": "REF1234A",
+      "company": {"identifier": "Acme1", "name": "Acme"},
+      "releasedDate": "2026-07-28T09:00:00.000Z",
+      "location": {"city": "Rome", "region": "RM", "country": "it", "remote": false},
+      "industry": {"id": "computer_software", "label": "Computer Software"},
+      "department": {"id": "1", "label": "Engineering"},
+      "function": {"id": "engineering", "label": "Engineering"},
+      "typeOfEmployment": {"label": "Full-time"},
+      "experienceLevel": {"id": "associate", "label": "Associate"},
+      "customField": [],
+      "ref": "https://api.smartrecruiters.com/v1/companies/Acme1/postings/744000012345678",
+      "creator": {"name": "Acme Recruiting"},
+      "language": {"code": "en", "label": "English"}
+    },
+    {
+      "id": "744000087654321",
+      "uuid": "deadbeef-8765-4321-9abc-def087654321",
+      "name": "Director of Operations",
+      "refNumber": "REF5678B",
+      "company": {"identifier": "Acme1", "name": "Acme"},
+      "releasedDate": "2026-08-03T14:00:00.000Z",
+      "location": {"city": "Lisbon", "region": "11", "country": "pt", "remote": true},
+      "industry": {"id": "computer_software", "label": "Computer Software"},
+      "department": {"id": "2", "label": "Operations"},
+      "function": {"id": "operations", "label": "Operations"},
+      "typeOfEmployment": {"label": "Full-time"},
+      "experienceLevel": {"id": "director", "label": "Director"},
+      "customField": [],
+      "ref": "https://api.smartrecruiters.com/v1/companies/Acme1/postings/744000087654321",
+      "creator": {"name": "Acme Recruiting"},
+      "language": {"code": "en", "label": "English"}
+    }
+  ]
+}

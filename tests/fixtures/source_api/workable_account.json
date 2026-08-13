@@ -1,0 +1,39 @@
+{
+  "name": "Acme",
+  "description": "Acme builds tools.",
+  "jobs": [
+    {
+      "title": "DevOps Engineer",
+      "shortcode": "3A1B2C",
+      "code": "",
+      "employment_type": "Full-time",
+      "telecommuting": false,
+      "department": "Engineering",
+      "url": "https://apply.workable.com/acme/j/3A1B2C/",
+      "application_url": "https://apply.workable.com/acme/j/3A1B2C/apply/",
+      "published_on": "2026-07-20",
+      "created_at": "2026-07-20",
+      "country": "Italy",
+      "city": "Turin",
+      "state": "Piedmont",
+      "education": ""
+    },
+    {
+      "title": "Customer Success Manager",
+      "shortcode": "9Z8Y7X",
+      "code": "",
+      "employment_type": "Full-time",
+      "telecommuting": true,
+      "department": "Customer",
+      "url": "https://apply.workable.com/acme/j/9Z8Y7X/",
+      "application_url": "https://apply.workable.com/acme/j/9Z8Y7X/apply/",
+      "published_on": "2026-08-01",
+      "created_at": "2026-08-01",
+      "country": "Spain",
+      "city": "Madrid",
+      "state": "",
+      "education": ""
+    }
+  ],
+  "total": 2
+}
