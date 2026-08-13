@@ -17,7 +17,7 @@
     },
     "experiences": {
       "exp-aurora": {
-        "end_date": "2024-06",
+        "end_date": null,
         "kind": "role",
         "org": "Aurora Logistics",
         "start_date": "2021-03",

@@ -25,6 +25,28 @@ run. `broken-fabricated-claim` places its breakage in a projects bullet (section
 coverage). `missing-requirement` is reserved and deferred to discovery per the ratified
 OC-9 amendment.
 
+## The canonical timeline (why exp-aurora is open-ended)
+
+`exp-aurora` (Backend Engineer, Aurora Logistics) is a **current role**: start 2021-03,
+no end date. This is not decoration. An earlier revision closed it at 2024-06 while the
+packages are generated in 2026-08, which left every summary that describes employment in
+the present tense ("working on order, checkout, and routing systems") asserting something
+the canonical timeline did not support. A real demonstration run caught it: the
+Consistency Judge emitted a valid blocking finding against `clean-paraphrase-1`, and it
+was right.
+
+That defect mattered more than a normal bug, because the clean controls are the corpus's
+**false-positive measurement**: a control carrying a latent inconsistency makes that
+measurement meaningless, and would train the corpus to treat a correct judge as a flake.
+The repair gives the fictional person a current role rather than rewriting the summaries
+into a tense that dodges the question, so the fixture is also the more realistic CV: no
+unexplained two-year employment gap. Present-tense claims in the summary and in the
+OpenRoute project bullets (also open-ended) are now genuinely supported.
+
+Consequence for authors: any future summary or bullet tense must be checked against this
+timeline. Aurora is current, BrightCart (2018-09 to 2021-02) and the BSc (2015-09 to
+2018-06) are past, OpenRoute (2022-01, open) is ongoing.
+
 ## The input gate
 
 Every case, clean and broken alike, must clear the shipped deterministic verifier, or its
