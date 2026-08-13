@@ -208,25 +208,58 @@ class SqliteDiscoveryRunRepository(DiscoveryRunRepository):
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
 
-    def start(self, budget_json: str, epoch: int) -> DiscoveryRun:
+    def start(self, budget_json: str, epoch: int, lease_owner: str | None = None,
+              lease_fence: int | None = None) -> DiscoveryRun:
         run_id = new_id("run")
         with self._conn:
             run_seq = self._conn.execute(
                 "SELECT COALESCE(MAX(run_seq), 0) + 1 FROM discovery_runs").fetchone()[0]
             self._conn.execute(
-                "INSERT INTO discovery_runs (id, run_seq, status, budget_json, epoch)"
-                " VALUES (?, ?, 'running', ?, ?)", (run_id, run_seq, budget_json, epoch))
+                "INSERT INTO discovery_runs (id, run_seq, status, budget_json,"
+                " epoch, lease_owner, lease_fence)"
+                " VALUES (?, ?, 'running', ?, ?, ?, ?)",
+                (run_id, run_seq, budget_json, epoch, lease_owner, lease_fence))
         return self.get(run_id)
+
+    def reconcile_abandoned(self) -> list[str]:
+        """Reconcile run rows left 'running' by a process that died: status
+        becomes 'interrupted' (terminal, and distinguishable from a clean
+        finish) with whatever spend was persisted retained. The ownership test
+        is the lease's own held_by logic (matching owner AND fence, unexpired
+        at the database clock), so a genuinely live run is never touched; a row
+        predating the lease columns carries no owner and is a past run.
+        Returns the reconciled run ids."""
+        with self._conn:
+            rows = self._conn.execute(
+                "SELECT id FROM discovery_runs r WHERE r.status = 'running'"
+                " AND NOT EXISTS (SELECT 1 FROM discovery_lease l"
+                "   WHERE l.id = 1 AND l.owner_token IS NOT NULL"
+                "     AND l.owner_token = r.lease_owner AND l.fence = r.lease_fence"
+                f"    AND l.expires_at IS NOT NULL AND l.expires_at >= {_NOW})"
+            ).fetchall()
+            ids = [r[0] for r in rows]
+            if ids:
+                self._conn.executemany(
+                    "UPDATE discovery_runs SET status = 'interrupted',"
+                    " finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+                    " WHERE id = ? AND status = 'running'",
+                    [(i,) for i in ids])
+        return ids
 
     def finish(self, run_id: str, status: str, spend_json: str,
                source_outcomes_json: str, exhausted_stage: str | None = None) -> None:
         if status not in ("completed", "budget_exhausted", "failed"):
             raise ValueError(f"unknown terminal run status '{status}'")
         with self._conn:
+            # Only a still-running row finishes: a run that lost its lease and
+            # was already reconciled to 'interrupted' by its successor keeps
+            # that terminal record, never overwritten by the old owner's late
+            # finalization.
             self._conn.execute(
                 "UPDATE discovery_runs SET status = ?, spend_json = ?,"
                 " source_outcomes_json = ?, exhausted_stage = ?,"
-                " finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+                " finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+                " WHERE id = ? AND status = 'running'",
                 (status, spend_json, source_outcomes_json, exhausted_stage, run_id))
 
     def get(self, run_id: str) -> DiscoveryRun | None:

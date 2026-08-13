@@ -11,6 +11,7 @@ import pytest
 from adapters.storage.migrations import migrate
 from adapters.storage.sqlite_discovery import (
     SqliteDependencyEpochRepository,
+    SqliteDiscoveryLease,
     SqliteDiscoveryRunRepository,
     SqliteSnapshotRepository,
     SqliteSourceRegistryRepository,
@@ -418,3 +419,49 @@ def test_dependency_epoch_starts_at_zero_and_bumps(repos):
     assert repos["epoch"].current() == 0
     assert repos["epoch"].bump() == 1
     assert repos["epoch"].bump() == 2
+
+
+def test_abandoned_run_row_is_reconciled_but_a_live_one_is_never_touched(conn, repos):
+    """Drive defect: a run whose process was killed left its row 'running'
+    forever. A row whose owning lease is no longer live reconciles to the
+    terminal 'interrupted' status with its persisted spend retained; a row
+    whose lease is still live is never touched."""
+    lease = SqliteDiscoveryLease(conn)
+    dead_fence = lease.acquire("dead-run", 3600)
+    dead = repos["runs"].start(Budget().to_json(), epoch=0,
+                               lease_owner="dead-run", lease_fence=dead_fence)
+    with conn:  # spend the process managed to persist before it died
+        conn.execute("UPDATE discovery_runs SET spend_json = ? WHERE id = ?",
+                     (json.dumps({"probe": 17}), dead.id))
+    with conn:  # the lease expired: the run is provably abandoned
+        conn.execute("UPDATE discovery_lease SET expires_at ="
+                     " '2000-01-01T00:00:00Z'")
+    live_fence = lease.acquire("live-run", 3600)
+    live = repos["runs"].start(Budget().to_json(), epoch=0,
+                               lease_owner="live-run", lease_fence=live_fence)
+
+    assert repos["runs"].reconcile_abandoned() == [dead.id]
+    reconciled = repos["runs"].get(dead.id)
+    assert reconciled.status == "interrupted"
+    assert reconciled.finished_at is not None
+    assert json.loads(reconciled.spend_json) == {"probe": 17}  # spend retained
+    assert repos["runs"].get(live.id).status == "running"  # never touched
+    assert repos["runs"].reconcile_abandoned() == []  # idempotent
+
+
+def test_a_reconciled_run_is_not_overwritten_by_its_old_owners_finish(conn, repos):
+    """Codex round 2: the losing runner's lease-loss handler must not undo a
+    successor's reconciliation. Once the row is terminal 'interrupted', a late
+    finish() from the old owner leaves it alone."""
+    lease = SqliteDiscoveryLease(conn)
+    fence = lease.acquire("old-owner", 3600)
+    run = repos["runs"].start(Budget().to_json(), epoch=0,
+                              lease_owner="old-owner", lease_fence=fence)
+    with conn:  # the successor takes the lease and reconciles the stale row
+        conn.execute("UPDATE discovery_lease SET expires_at ="
+                     " '2000-01-01T00:00:00Z'")
+    lease.acquire("successor", 3600)
+    assert repos["runs"].reconcile_abandoned() == [run.id]
+
+    repos["runs"].finish(run.id, "failed", "{}", "{}")  # the old owner, late
+    assert repos["runs"].get(run.id).status == "interrupted"

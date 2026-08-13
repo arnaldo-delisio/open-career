@@ -245,19 +245,31 @@ class DiscoveryRunner:
             self._say("another discovery run holds the lease; nothing ran")
             return None
         epoch = self._epoch_repo.current()
+        # Holding the lease, any run row still 'running' whose own lease
+        # ownership no longer holds is provably abandoned (§4): reconcile it
+        # before starting, so run history stops reporting phantom live runs.
+        self._runs.reconcile_abandoned()
         ledger = BudgetLedger(self._config.budget)
-        run = self._runs.start(self._config.to_json(), epoch)
+        run = self._runs.start(self._config.to_json(), epoch,
+                               lease_owner=self._owner, lease_fence=self._fence)
         try:
-            # Exhaustion at any stage stops the run there (§4): completed work
-            # is persisted, and no later stage (gate or model calls included)
-            # runs after an earlier stage exhausted its budget.
-            for stage in (lambda: self._probe(ledger),
-                          lambda: self._poll(ledger, run),
-                          lambda: self._gate(ledger, epoch, run),
-                          lambda: self._promote(ledger, epoch, run)):
-                stage()
-                if ledger.exhaustion:
-                    break
+            # Exhaustion stops the stages that share the exhausted budget, and
+            # only those (§4). Probe and fetch are separate locked budgets, so
+            # an exhausted probe budget stops probing and nothing else: the run
+            # continues into poll, gate and promote. Fetch exhaustion still
+            # stops the model stages and extraction exhaustion still stops
+            # judgment, the deliberately conservative rule protecting real
+            # spend.
+            self._probe(ledger)
+            self._poll(ledger, run)
+            if not ledger.exhausted("fetch"):
+                self._gate(ledger, epoch, run)
+                if not ledger.exhausted("gate"):
+                    self._promote(ledger, epoch, run)
+            exhausted = sorted(ledger.exhausted_stages)
+            if len(exhausted) > 1:
+                self._notes.append(
+                    "budget exhausted at stages: " + ", ".join(exhausted))
             status = "budget_exhausted" if ledger.exhaustion else "completed"
             stage = ledger.exhaustion.stage if ledger.exhaustion else None
             self._runs.finish(run.id, status, ledger.spend_json(),
@@ -704,9 +716,10 @@ class DiscoveryRunner:
         run_seq = run.run_seq
         capability_names = self._eligible_capability_names()
         self._extract(ledger, epoch, run_seq, capability_names)
-        if ledger.exhaustion:
-            # §4: exhaustion at any substage stops the funnel there; judgment
-            # never runs after an extraction-stage exhaustion.
+        if ledger.exhausted("extraction"):
+            # §4: extraction exhaustion stops the funnel there; judgment never
+            # runs after it (an earlier probe exhaustion is a different budget
+            # and does not reach here).
             return
         self._judge(ledger, epoch, run_seq, capability_names)
 

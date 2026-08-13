@@ -273,3 +273,65 @@ def test_migrations_dir_resolution_prefers_repo_then_packaged(tmp_path):
     # Repo checkout present: it wins.
     repo.mkdir()
     assert _resolve_migrations_dir(repo, packaged) == repo
+
+
+def test_0009_rebuilds_discovery_runs_on_a_populated_database(tmp_path):
+    """Drive defect: the discovery_runs rebuild (0009) must upgrade a real
+    registry, where snapshots.run_id already references run rows. Foreign keys
+    stay enforced, so the rebuild parks and restores those references; every
+    run row, every snapshot reference and the widened status CHECK survive."""
+    import shutil
+
+    db = tmp_path / "test.sqlite3"
+    pre = tmp_path / "pre0009"
+    pre.mkdir()
+    for f in MIGRATIONS_DIR.glob("[0-9]*.sql"):
+        if not f.name.startswith("0009"):
+            shutil.copy(f, pre)
+    migrate(db, migrations_dir=pre)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    with conn:
+        conn.execute("INSERT INTO sources (id, ats_type, tenant_slug, origin,"
+                     " status) VALUES ('s1', 'greenhouse', 'acme', 'curated',"
+                     " 'enabled')")
+        conn.execute("INSERT INTO discovery_runs (id, run_seq, status,"
+                     " budget_json, epoch, spend_json)"
+                     " VALUES ('r1', 1, 'running', '{}', 0, '{\"probe\": 9}')")
+        conn.execute("INSERT INTO discovery_runs (id, run_seq, status,"
+                     " budget_json, epoch) VALUES ('r2', 2, 'completed', '{}', 0)")
+        conn.execute("INSERT INTO snapshots (id, source_id, seq, raw_locator,"
+                     " content_hash, completion_json, posting_count, run_id)"
+                     " VALUES ('sn1', 's1', 1, 'loc', 'h', '{}', 0, 'r1')")
+        conn.execute("INSERT INTO snapshots (id, source_id, seq, raw_locator,"
+                     " content_hash, completion_json, posting_count)"
+                     " VALUES ('sn2', 's1', 2, 'loc', 'h', '{}', 0)")
+    conn.close()
+
+    assert "0009" in migrate(db)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert conn.execute("SELECT id, run_id FROM snapshots ORDER BY id"
+                            ).fetchall() == [("sn1", "r1"), ("sn2", None)]
+        assert conn.execute("SELECT status, spend_json FROM discovery_runs"
+                            " WHERE id = 'r1'").fetchone() \
+            == ("running", '{"probe": 9}')
+        with conn:  # the widened status CHECK accepts the terminal reconcile
+            conn.execute("UPDATE discovery_runs SET status = 'interrupted'"
+                         " WHERE id = 'r1'")
+        with pytest.raises(sqlite3.IntegrityError):  # and nothing else
+            with conn:
+                conn.execute("UPDATE discovery_runs SET status = 'bogus'"
+                             " WHERE id = 'r1'")
+        with pytest.raises(sqlite3.IntegrityError):  # the FK still enforces
+            with conn:
+                conn.execute(
+                    "INSERT INTO snapshots (id, source_id, seq, raw_locator,"
+                    " content_hash, completion_json, posting_count, run_id)"
+                    " VALUES ('sn3', 's1', 3, 'l', 'h', '{}', 0, 'nope')")
+    finally:
+        conn.close()

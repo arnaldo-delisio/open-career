@@ -569,11 +569,17 @@ class DiscoveryRunRepository(ABC):
     per-source outcomes at finish, monotonic run_seq for retry backoff."""
 
     @abstractmethod
-    def start(self, budget_json: str, epoch: int): ...
+    def start(self, budget_json: str, epoch: int, lease_owner: str | None = None,
+              lease_fence: int | None = None): ...
 
     @abstractmethod
     def finish(self, run_id: str, status: str, spend_json: str,
                source_outcomes_json: str, exhausted_stage: str | None = None) -> None: ...
+
+    @abstractmethod
+    def reconcile_abandoned(self) -> list[str]:
+        """Run rows still 'running' whose owning lease is no longer live are
+        reconciled to the terminal 'interrupted' status, spend retained."""
 
     @abstractmethod
     def get(self, run_id: str): ...

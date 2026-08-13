@@ -11,6 +11,7 @@ import sqlite3
 
 from adapters.storage.sqlite_discovery import (
     SqliteDiscoveryLease,
+    SqliteDiscoveryRunRepository,
     SqliteSourceRegistryRepository,
 )
 from adapters.storage.sqlite_opportunities import (
@@ -85,20 +86,33 @@ def _exhaustion_note(run) -> str:
 
 
 def run_recover(conn, say) -> None:
-    """Clear an expired run lease (the package pipeline's recovery precedent:
-    only an expired lease is ever claimed; a live one is refused, never
-    stolen from under its owner)."""
+    """Clear an expired run lease and reconcile the run rows a dead process
+    left behind (the package pipeline's recovery precedent: only an expired
+    lease is ever claimed; a live one is refused, never stolen from its
+    owner). Reconciliation uses the lease's own ownership and expiry test, so
+    a live run is never marked interrupted."""
     lease = SqliteDiscoveryLease(conn)
+    runs = SqliteDiscoveryRunRepository(conn)
     owner, expires_at = lease.holder()
     if owner is None:
-        say("no lease held; nothing to recover")
+        _say_reconciled(runs.reconcile_abandoned(), say,
+                        empty="no lease held; nothing to recover")
         return
     if lease.claim_expired():
         say(f"cleared expired lease (was held by {owner}, expired {expires_at})")
+        _say_reconciled(runs.reconcile_abandoned(), say, empty=None)
         return
     raise DiscoverCliError(
         f"lease is live (holder {owner}, expires {expires_at}); a live lease"
         " is never stolen. Wait for expiry or for the run to finish")
+
+
+def _say_reconciled(run_ids: list[str], say, empty: str | None) -> None:
+    if run_ids:
+        say(f"reconciled {len(run_ids)} abandoned run(s) to interrupted:"
+            f" {', '.join(run_ids)}")
+    elif empty:
+        say(empty)
 
 
 def _run_view(run) -> dict:

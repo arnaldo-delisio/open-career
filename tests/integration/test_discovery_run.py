@@ -17,6 +17,7 @@ from adapters.storage.migrations import migrate
 from adapters.storage.sqlite_discovery import (
     SqliteDependencyEpochRepository,
     SqliteDiscoveryLease,
+    SqliteDiscoveryRunRepository,
     SqliteSnapshotRepository,
     SqliteSourceRegistryRepository,
 )
@@ -1508,3 +1509,61 @@ def test_cold_start_fallback_is_recorded_on_the_run(instance):
     run = run_once(conn, storage, adapters, config, model)
     outcomes = json.loads(run.source_outcomes_json)
     assert any("cold_start_fallback" in n for n in outcomes["notes"])
+
+
+def test_probe_exhaustion_stops_probing_only_and_the_run_still_polls(instance):
+    """Drive defect: with 10,589 candidates the probe budget exhausted every
+    run and stopped poll, gate and promote with it, so a large candidate
+    backlog starved polling indefinitely. Probe and fetch are separate locked
+    budgets: an exhausted probe budget stops probing only, the run polls due
+    enabled sources and gates in the same run, and the probe exhaustion is
+    still recorded on the run."""
+    conn, storage = instance
+    enabled = seed_source(conn)
+    candidate = Source(id=new_id("src"), ats_type="greenhouse",
+                       tenant_slug="othertenant", origin="curated",
+                       status="candidate")
+    SqliteSourceRegistryRepository(conn).add(candidate)
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_probes=0))  # a due candidate cannot be probed
+    run = run_once(conn, storage, adapters, config, model)
+
+    assert run.status == "budget_exhausted"
+    assert run.exhausted_stage == "probe"  # the signal is not lost
+    spend = json.loads(run.spend_json)
+    assert spend["probe"] == 0
+    assert spend["fetch"] > 0 and spend["gate"] > 0  # polled and gated anyway
+    assert SqliteSourceRegistryRepository(conn).get(candidate.id).status \
+        == "candidate"  # unprobed, as the probe budget dictates
+    snapshots = SqliteSnapshotRepository(conn).list_for_source(enabled.id)
+    assert len(snapshots) == 1 and snapshots[0].posting_count == 1
+    assert conn.execute("SELECT COUNT(*) FROM gate_verdicts").fetchone()[0] == 1
+    rows = SqlitePromotionQueueRepository(conn).list_rows()
+    assert len(rows) == 1 and rows[0].state == "judged"  # model stages ran too
+
+
+def test_run_start_reconciles_an_abandoned_run_row(instance):
+    """Drive defect: three run rows sat 'running' from killed processes. A
+    starting run reconciles any row it can prove abandoned (dead lease), with
+    the spend that was persisted retained, and never touches its own."""
+    conn, storage = instance
+    seed_source(conn)
+    lease = SqliteDiscoveryLease(conn)
+    fence = lease.acquire("killed-run", 3600)
+    abandoned = SqliteDiscoveryRunRepository(conn).start(
+        Budget().to_json(), epoch=0, lease_owner="killed-run", lease_fence=fence)
+    with conn:
+        conn.execute("UPDATE discovery_runs SET spend_json = ? WHERE id = ?",
+                     (json.dumps({"probe": 2000}), abandoned.id))
+        conn.execute("UPDATE discovery_lease SET owner_token = NULL,"
+                     " expires_at = NULL")  # the killed process left no holder
+
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")))
+    run = run_once(conn, storage, adapters, config, model)
+
+    stale = SqliteDiscoveryRunRepository(conn).get(abandoned.id)
+    assert stale.status == "interrupted" and stale.finished_at is not None
+    assert json.loads(stale.spend_json) == {"probe": 2000}  # spend retained
+    assert run.status == "completed"  # this run finished normally

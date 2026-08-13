@@ -25,7 +25,8 @@ QueueState = Literal[
     "pending_extraction", "extracted", "pending_judgment", "judged",
     "superseded", "failed",
 ]
-RunStatus = Literal["running", "completed", "budget_exhausted", "failed"]
+RunStatus = Literal["running", "completed", "budget_exhausted", "failed",
+                    "interrupted"]
 CohortOutcome = Literal["pending", "closed", "reappeared"]
 
 # Greenhouse/Lever/Ashby are the fill-adapter set (OC-3); Workable and

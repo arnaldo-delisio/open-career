@@ -65,10 +65,22 @@ class BudgetLedger:
         self._spend: dict[str, int] = {stage: 0 for stage in STAGES}
         self._model_calls = 0
         self._exhaustion: Exhaustion | None = None
+        self._exhausted: set[str] = set()
 
     @property
     def exhaustion(self) -> Exhaustion | None:
         return self._exhaustion
+
+    @property
+    def exhausted_stages(self) -> frozenset[str]:
+        """Every stage that ran out this run, not only the first refusal.
+        The stage budgets are separate, so a caller deciding whether a LATER
+        stage may run asks about that stage's own chain, never about the
+        first exhaustion recorded (§4)."""
+        return frozenset(self._exhausted)
+
+    def exhausted(self, stage: str) -> bool:
+        return stage in self._exhausted
 
     def spent(self, stage: str) -> int:
         return self._spend[stage]
@@ -101,6 +113,7 @@ class BudgetLedger:
         self._note_exhaustion(stage, self._spend[stage], limit)
 
     def _note_exhaustion(self, stage: str, spent: int, limit: int) -> None:
+        self._exhausted.add(stage)
         if self._exhaustion is None:  # the first refusal names the run's stop
             self._exhaustion = Exhaustion(stage=stage, spent=spent, limit=limit)
 

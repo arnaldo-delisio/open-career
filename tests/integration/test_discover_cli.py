@@ -309,6 +309,62 @@ def test_recover_clears_expired_lease_and_refuses_a_live_one(instance, capsys):
     assert "nothing to recover" in capsys.readouterr().out
 
 
+def test_recover_reconciles_an_abandoned_run_row_and_spares_a_live_one(
+        instance, capsys):
+    """Drive defect: run rows left 'running' by a killed process are phantom
+    live runs forever. `discover recover` reconciles a row whose lease is no
+    longer live to 'interrupted' with its spend retained, and a concurrent
+    recover attempt never reconciles a genuinely live run."""
+    from adapters.storage.sqlite_discovery import (
+        SqliteDiscoveryLease,
+        SqliteDiscoveryRunRepository,
+    )
+    from domain.budget import Budget
+
+    conn = connect(instance)
+    try:
+        lease = SqliteDiscoveryLease(conn)
+        runs = SqliteDiscoveryRunRepository(conn)
+        dead_fence = lease.acquire("killed-run", 3600)
+        abandoned = runs.start(Budget().to_json(), epoch=0,
+                               lease_owner="killed-run", lease_fence=dead_fence)
+        with conn:
+            conn.execute("UPDATE discovery_runs SET spend_json = ? WHERE id = ?",
+                         (json.dumps({"probe": 2000}), abandoned.id))
+            conn.execute("UPDATE discovery_lease SET expires_at ="
+                         " '2000-01-01T00:00:00Z'")
+    finally:
+        conn.close()
+
+    main(["discover", "recover"])
+    out = capsys.readouterr().out
+    assert "cleared expired lease" in out
+    assert "reconciled 1 abandoned run(s) to interrupted" in out
+
+    conn = connect(instance)
+    try:
+        runs = SqliteDiscoveryRunRepository(conn)
+        stored = runs.get(abandoned.id)
+        assert stored.status == "interrupted" and stored.finished_at
+        assert json.loads(stored.spend_json) == {"probe": 2000}
+        # A live run: lease held and unexpired, so recover refuses and the
+        # row stays 'running'.
+        live_fence = SqliteDiscoveryLease(conn).acquire("live-run", 3600)
+        live = runs.start(Budget().to_json(), epoch=0,
+                          lease_owner="live-run", lease_fence=live_fence)
+    finally:
+        conn.close()
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["discover", "recover"])
+    assert excinfo.value.code == 1
+    conn = connect(instance)
+    try:
+        assert SqliteDiscoveryRunRepository(conn).get(live.id).status == "running"
+    finally:
+        conn.close()
+
+
 def test_config_errors_are_clean_one_liners(instance, capsys):
     """Drive defect 4: unknown discovery.json keys name the allowed keys;
     malformed JSON reports the file and error without a traceback."""
