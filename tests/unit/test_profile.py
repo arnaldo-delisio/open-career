@@ -106,3 +106,43 @@ def test_free_text_fields_stay_free(repo):
 def test_unknown_source_is_rejected(repo):
     with pytest.raises(ValueError, match="unknown profile write source"):
         repo.set_field("location", "Rome", source="matcher")
+
+
+# -- closed yes/no fields (drive finding) -------------------------------------
+
+def test_the_obvious_yes_no_synonyms_are_accepted_and_stored_canonically(repo):
+    """The drive typed 'y' at a prompt that said (yes/no) and the Gauntlet's
+    policy validator then rejected the stored value, so the package could
+    never pass. The synonym is accepted here, explicitly, and canonicalized."""
+    repo.set_field("authorized_in_country", "y", source="user_edit")
+    repo.set_field("needs_sponsorship", "N", source="user_edit")
+    assert repo.get_fields() == {"authorized_in_country": "yes",
+                                 "needs_sponsorship": "no"}
+
+
+def test_a_non_yes_no_answer_is_refused_at_the_seam(repo):
+    with pytest.raises(InvalidProfileValueError) as e:
+        repo.set_field("authorized_in_country", "maybe", source="user_edit")
+    assert "yes or no" in str(e.value)
+    assert repo.get_fields() == {}
+
+
+def test_every_registry_yes_no_question_is_validated_at_the_seam():
+    """One home for the closed set: a question offering yes/no choices whose
+    field the seam does not validate is exactly the drive's defect."""
+    from domain.profile import YES_NO_CHOICES, YES_NO_FIELDS
+    from domain.questions import questions
+
+    offered = {q.key for q in questions(kind="profile")
+               if q.choices == YES_NO_CHOICES}
+    assert offered == YES_NO_FIELDS
+
+
+def test_the_authorization_contradiction_is_named_not_silently_accepted():
+    from domain.profile import authorization_contradiction
+
+    assert authorization_contradiction(
+        {"authorized_in_country": "yes", "needs_sponsorship": "no"}) is None
+    conflict = authorization_contradiction(
+        {"authorized_in_country": "yes", "needs_sponsorship": "yes"})
+    assert conflict is not None and "sponsorship" in conflict

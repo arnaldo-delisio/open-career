@@ -12,6 +12,7 @@ import pytest
 import adapters.sources as sources_pkg
 from adapters.sources.greenhouse import GreenhouseAdapter
 from adapters.sources.http import HttpFetcher
+from adapters.sources.smartrecruiters import SmartRecruitersAdapter
 from adapters.storage.migrations import migrate
 from apps.cli.main import main
 from domain.ports import ModelAdapter
@@ -530,6 +531,44 @@ def test_enable_requires_a_passing_probe(instance, capsys, monkeypatch):
     assert json.loads(capsys.readouterr().out)[0]["status"] == "candidate"
 
     patch_run_dependencies(monkeypatch)  # healthy canned board
+    main(["discover", "sources", "enable", source_id])
+    assert "probe passed" in capsys.readouterr().out
+    main(["discover", "sources", "list", "--json"])
+    assert json.loads(capsys.readouterr().out)[0]["status"] == "enabled"
+
+
+def test_enable_of_a_smartrecruiters_slug_needs_tenant_evidence(
+        instance, capsys, monkeypatch):
+    """The CLI enable path shares the probe service, so the vendor's
+    undiscriminating postings collection cannot enable an invented slug there
+    either: verification reads the departments resource, which 404s."""
+    tenant_exists = [False]
+
+    def transport(url, headers, timeout):
+        if "/departments" in url:
+            if tenant_exists[0]:
+                return 200, b'{"totalFound":1,"content":[{"id":1}]}', {}
+            return 404, b'{"httpCode":404,"code":"RESOURCE_NOT_FOUND"}', {}
+        # 200 with an empty page for any company id, real or invented.
+        return 200, b'{"offset":0,"limit":100,"totalFound":0,"content":[]}', {}
+
+    canned = HttpFetcher(transport=transport, sleep=lambda _s: None,
+                         clock=lambda: 0.0, min_interval_s=0)
+    monkeypatch.setattr(
+        sources_pkg, "build_adapters",
+        lambda fetcher=None, max_pages_per_poll=None:
+        {"smartrecruiters": SmartRecruitersAdapter(canned)})
+    main(["discover", "sources", "add", "smartrecruiters", "nosuchtenant"])
+    capsys.readouterr()
+    main(["discover", "sources", "list", "--json"])
+    source_id = json.loads(capsys.readouterr().out)[0]["id"]
+
+    main(["discover", "sources", "enable", source_id])
+    assert "NOT enabled" in capsys.readouterr().out
+    main(["discover", "sources", "list", "--json"])
+    assert json.loads(capsys.readouterr().out)[0]["status"] == "candidate"
+
+    tenant_exists[0] = True  # the same slug, now a tenant that exists
     main(["discover", "sources", "enable", source_id])
     assert "probe passed" in capsys.readouterr().out
     main(["discover", "sources", "list", "--json"])

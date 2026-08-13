@@ -21,6 +21,13 @@ from dataclasses import dataclass
 
 from domain.ats_check import check_ats
 from domain.cv_model import CvModel
+from domain.dates import (
+    MONTH_NAMES,
+    chron_rank,
+    is_readable,
+    parse,
+    starts_before_end,
+)
 from domain.grounding import GroundingVerifier
 from domain.grounding_spec import SPEC_VERSION, normalize, normalize_chars
 
@@ -87,8 +94,14 @@ _AUTH_PATTERNS = tuple(re.compile(p) for p in (
 # feeds; bullets are already whitespace after normalization.
 _SENTENCE_SPLIT = re.compile(r"[.\n\f;]+")
 
-# Date-like spans in rendered text: YYYY-MM, or a standalone plausible year.
-_RENDERED_DATE = re.compile(r"\b((?:19|20)\d{2})(?:-(0[1-9]|1[0-2]))?\b")
+# Date-like spans in rendered text: ISO YYYY-MM, a month name beside a year
+# (the form a CV actually prints), or a standalone plausible year. Each hit is
+# read through the canonical parser, so the horizon check sees "September 2015"
+# as the month it is instead of only the bare year.
+_MONTH_WORD = "|".join(sorted(MONTH_NAMES, key=len, reverse=True))
+_RENDERED_DATE = re.compile(
+    rf"\b(?:({_MONTH_WORD})\.?\s+((?:19|20)\d{{2}})"
+    rf"|((?:19|20)\d{{2}})(?:-(0[1-9]|1[0-2]))?)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -419,30 +432,55 @@ def _check_regrounding(cv: CvModel, snapshot: dict, verifier_final: dict) -> Inv
 
 
 def _check_date_coherence(cv: CvModel, snapshot: dict, extracted_text: str) -> InvariantResult:
-    problems = []
+    """Coherence is judged on the canonical time value behind each date label
+    (domain/dates.py), never on the label's characters: the stored label is
+    what the CV displays, and "September 2015" is the same month as "2015-09".
+    A label the parser cannot read is reported as unreadable (disposition
+    `attention`), never asserted to be a contradiction."""
+    problems: list[str] = []
+    unreadable: list[str] = []
     for entry in cv.all_entries():
-        if entry.start_date and entry.end_date and entry.start_date > entry.end_date:
+        for field, label in (("start_date", entry.start_date),
+                             ("end_date", entry.end_date)):
+            if label and not is_readable(label):
+                unreadable.append(f"[{entry.experience_id}] {field} '{label}'")
+        if starts_before_end(entry.start_date, entry.end_date) is False:
             problems.append(
                 f"[{entry.experience_id}] start {entry.start_date} follows"
                 f" end {entry.end_date}")
     # Reverse-chronological experience order against the canonical rows.
     rows = snapshot["renderable_grounding_view"]["experiences"]
-    keys = [(row["end_date"] or "9999-99", row["start_date"] or "")
-            for entry in cv.experiences
-            for row in [rows.get(entry.experience_id)] if row is not None]
-    if keys != sorted(keys, reverse=True):
+    ordered = [row for entry in cv.experiences
+               for row in [rows.get(entry.experience_id)] if row is not None]
+    keys = [chron_rank(row["start_date"], row["end_date"]) for row in ordered]
+    unordered = keys != sorted(keys, reverse=True)
+    order_unreadable = any(not is_readable(row[field]) for row in ordered
+                           for field in ("start_date", "end_date"))
+    if unordered and not order_unreadable:
         problems.append("experience section is not reverse-chronological against"
                         " the canonical rows")
+    elif unordered:
+        unreadable.append("experience order could not be checked: a canonical"
+                          " row carries an unreadable date")
     # No date in generated text postdates generated_at.
-    horizon = cv.meta.generated_at[:7]  # YYYY-MM
+    horizon = parse(cv.meta.generated_at[:7])  # YYYY-MM
     for match in _RENDERED_DATE.finditer(normalize_chars(extracted_text)):
-        year, month = match.group(1), match.group(2)
-        rendered = f"{year}-{month}" if month else year
-        limit = horizon if month else horizon[:4]
-        if rendered > limit:
-            problems.append(f"rendered date {rendered} postdates generated_at {horizon}")
+        name, name_year, iso_year, iso_month = match.groups()
+        rendered = parse(f"{name} {name_year}" if name else
+                         (f"{iso_year}-{iso_month}" if iso_month else iso_year))
+        if rendered is None or horizon is None:
+            continue
+        if starts_before_end(rendered.iso, horizon.iso) is False:
+            problems.append(
+                f"rendered date {rendered.iso} postdates generated_at {horizon.iso}")
     if problems:
         return InvariantResult("date-coherence", FAIL, "; ".join(problems))
+    if unreadable:
+        return InvariantResult(
+            "date-coherence", ATTENTION,
+            "dates cohere as far as they can be read; unreadable date labels"
+            " (fix them with `open-career onboard`, e.g. '2015-09' or"
+            f" 'September 2015'): {'; '.join(unreadable)}")
     return InvariantResult("date-coherence", PASS, "dates cohere")
 
 

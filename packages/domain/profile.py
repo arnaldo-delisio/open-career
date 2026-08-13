@@ -43,6 +43,18 @@ class InvalidProfileValueError(ValueError):
 # Mechanical shape checks for the fields that later feed application forms
 # directly; everything else stays free text.
 _EMAIL_SHAPE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+# Closed yes/no fields. These are not free text: the work-authorization
+# projection (the Gauntlet's stage-zero policy input) is defined over exactly
+# the strings "yes" and "no", so a "y" accepted here is a package that can
+# never be judged. The obvious synonyms are accepted EXPLICITLY and mapped to
+# the canonical value; anything else is refused at the seam with the closed
+# set named, never stored and rejected six minutes later.
+YES_NO_CHOICES: tuple[str, ...] = ("yes", "no")
+YES_NO_FIELDS = frozenset({"authorized_in_country", "needs_sponsorship",
+                           "relocation", "future_contact_consent"})
+_YES_NO_SYNONYMS = {"y": "yes", "yes": "yes", "yeah": "yes", "true": "yes",
+                    "n": "no", "no": "no", "nope": "no", "false": "no"}
 _HOST_LABEL = re.compile(r"^[A-Za-z0-9-]+$")
 _URL_FIELDS = {"linkedin_url", "github_url", "portfolio_url", "website_url"}
 
@@ -73,9 +85,14 @@ def validate_profile_field(field: str) -> None:
 
 def normalize_profile_value(field: str, value: str | None) -> str | None:
     """Canonical storage form: a scheme-less URL that passed validation is
-    stored with https:// prefixed, so every stored link is directly usable."""
-    if value is not None and field in _URL_FIELDS and "://" not in value:
+    stored with https:// prefixed, so every stored link is directly usable;
+    a recognized yes/no synonym is stored as its canonical word."""
+    if value is None:
+        return None
+    if field in _URL_FIELDS and "://" not in value:
         return f"https://{value}"
+    if field in YES_NO_FIELDS:
+        return _YES_NO_SYNONYMS.get(value.strip().lower(), value)
     return value
 
 
@@ -90,3 +107,20 @@ def validate_profile_value(field: str, value: str | None) -> None:
     if field in _URL_FIELDS and not _looks_like_url(value):
         raise InvalidProfileValueError(
             f"'{value}' does not look like a URL (expected e.g. https://example.com/...)")
+    if field in YES_NO_FIELDS and value not in YES_NO_CHOICES:
+        raise InvalidProfileValueError(
+            f"'{value}' is not an answer to '{field}' (expected"
+            f" {' or '.join(YES_NO_CHOICES)}; y/n are accepted too)")
+
+
+def authorization_contradiction(fields: dict[str, str | None]) -> str | None:
+    """The one combination of authorization answers that cannot both be
+    straightforwardly true. It is not always an error (a time-limited permit
+    is real), so this names the conflict for the human to resolve rather than
+    refusing the answers."""
+    if fields.get("authorized_in_country") == "yes" and fields.get("needs_sponsorship") == "yes":
+        return ("you are authorized to work in your target country AND need visa"
+                " sponsorship; eligibility gates read these as opposites, so"
+                " unless a time-limited permit really makes both true, one of"
+                " them is the answer you meant")
+    return None

@@ -55,7 +55,13 @@ from domain.ports import PackageRepository, PdfTextExtractor, StorageAdapter
 # gauntlet-3: the Codex judge invocation changed (the staged CODEX_HOME is
 # bound read-write, without which the call fails), and run identity now
 # records the observed provider version beside the observed model identity.
-SUITE_VERSION = "gauntlet-3"
+# gauntlet-4: the date-coherence rule changed. It now judges the canonical
+# time value behind each date label (domain/dates.py) instead of the label's
+# characters, reads month-name dates in the horizon check, and reports an
+# unreadable label as `attention` rather than asserting a contradiction. A
+# rule change is a suite change, so the demonstration table is void until the
+# corpus is re-demonstrated under this suite.
+SUITE_VERSION = "gauntlet-4"
 
 RESERVATION_SECONDS = 60
 HEARTBEAT_INTERVAL_SECONDS = 10
@@ -237,7 +243,8 @@ class GauntletRunner:
                  judge_models: Mapping[str, object],
                  prompt_templates: Mapping[str, str],
                  heartbeat_repo_factory: Callable[
-                     [], AbstractContextManager[PackageRepository]] | None = None):
+                     [], AbstractContextManager[PackageRepository]] | None = None,
+                 progress: Callable[[str], None] | None = None):
         if heartbeat_repo_factory is None:
             # Fail fast and loudly rather than silently sharing the caller's
             # connection: the heartbeat renews from its own THREAD, and a
@@ -256,6 +263,10 @@ class GauntletRunner:
         self._judge_models = judge_models
         self._prompt_templates = prompt_templates
         self._heartbeat_repo_factory = heartbeat_repo_factory
+        # Progress reporting, injected. Three sequential judge calls are
+        # minutes of silence otherwise; the runner emits lines and never
+        # prints (domain purity).
+        self._progress = progress or (lambda _line: None)
 
     def run(self, version: PackageVersion, profile: dict,
             policies: dict) -> GauntletRunResult:
@@ -411,6 +422,7 @@ class GauntletRunner:
                 # extractor or the invariant rules still becomes a fenced
                 # audit-integrity FAIL append, never an abort before it.
                 try:
+                    self._progress("gauntlet stage zero: deterministic invariants")
                     extracted_text = self._extractor.extract_layout(artifact_bytes)
                     invariants = run_invariants(
                         cv=cv, snapshot=snapshot, snapshot_bytes=snapshot_bytes,
@@ -441,13 +453,17 @@ class GauntletRunner:
                 # fence spends nothing further.
                 if heartbeat.lost.is_set():
                     return self._heartbeat_stop(version, owner, heartbeat)
+                self._progress(f"gauntlet judge {judge}: calling the model")
                 ran.append(run_judge(
                     judge, self._judge_models[judge],
                     build_judge_prompt(judge, self._prompt_templates[judge],
                                        cv, snapshot),
                     cv, snapshot["renderable_grounding_view"]["profile"]))
             judges = tuple(ran)
+            for j in judges:
+                self._progress(f"gauntlet judge {j.judge}: {j.outcome}")
         else:
+            self._progress("gauntlet: stage zero failed; no judge runs")
             # Any stage-zero failure ends the run: no judge runs, no model
             # tokens are spent.
             judges = tuple(not_run(judge) for judge in JUDGES)

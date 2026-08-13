@@ -189,3 +189,96 @@ def test_gauntlet_json_output_and_archive_roundtrip_of_run_evidence(env, tmp_pat
     for locator in (run.policy_snapshot_locator, run.prompt_inputs_locator,
                     run.raw_completions_locator):
         assert (target_root / locator).exists()
+
+
+def _stage_zero_failing_version(env):
+    """A version that fails stage zero on a never-render constraint: the cause
+    is not in the drafted text's quality, so no regeneration can fix it."""
+    conn, storage = env
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    version = SqlitePackageRepository(conn).get_version(result.version_id)
+    org = json.loads(version.content_model_json)["experiences"][0]["org"]
+    SqliteUserPolicyRepository(conn).set_policy(
+        "never_render", [org], source="user_edit")
+    return result
+
+
+def test_a_stage_zero_failure_names_the_real_repair_not_regeneration(env):
+    """The drive's loop: every failure printed `--findings-from`, so the human
+    spent six minutes reaching an identical verdict under a new version id.
+    Stage zero never judges the drafted text, so it never suggests a redraft."""
+    conn, storage = env
+    result = _stage_zero_failing_version(env)
+    said = []
+    package_cmd.run_gauntlet(conn, storage, _judges(), result.version_id,
+                             False, said.append)
+    output = "\n".join(said)
+    assert "failed invariant user-constraints" in output
+    assert "policy set never_render" in output
+    assert "--findings-from" not in output
+
+
+def test_a_work_authorization_failure_names_the_exact_profile_command(env):
+    conn, _storage = env
+    lines = "\n".join(package_cmd._invariant_remedies("work-authorization", "detail"))
+    assert "`open-career profile set authorized_in_country yes|no`" in lines
+    assert "`open-career profile set needs_sponsorship yes|no`" in lines
+    date_lines = "\n".join(package_cmd._invariant_remedies("date-coherence", "detail"))
+    assert "open-career onboard" in date_lines and "--findings-from" not in date_lines
+
+
+def test_judge_findings_are_the_one_case_that_offers_regeneration(env):
+    conn, storage = env
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    said = []
+    package_cmd.run_gauntlet(conn, storage, _failing_judges(conn, result.version_id),
+                             result.version_id, False, said.append)
+    output = "\n".join(said)
+    assert f"--findings-from {result.version_id}" in output
+
+
+def test_show_carries_the_full_report_and_the_override_decision(env):
+    """Both defects the drive hit at once: `--json` emitted only
+    'adjudicated' with no word of what failed, and the override reason
+    appeared in no output at all."""
+    conn, storage = env
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    package_cmd.run_gauntlet(conn, storage, _failing_judges(conn, result.version_id),
+                             result.version_id, False, lambda _s: None)
+    package_cmd.run_review(conn, storage, None, result.version_id, 1,
+                           lambda _p: "a", lambda _s: None,
+                           accept_despite="hand-checked against the source facts")
+    said = []
+    package_cmd.run_show(conn, result.version_id, True, said.append)
+    payload = json.loads("".join(said))
+    report = payload["gauntlet_runs"][0]["report"]
+    assert report["verdict"] == "FAIL"
+    assert [r["rule"] for r in report["invariants"]]  # dispositions and details
+    assert any(f["message"] == "recombines unsupported claims"
+               for judge in report["judges"] for f in judge["findings"])
+    (decision,) = payload["approval_decisions"]
+    assert decision["override"] is True
+    assert decision["override_reason"] == "hand-checked against the source facts"
+    assert decision["verdict_at_decision"] == "FAIL"
+    # The human view says the same thing.
+    said = []
+    package_cmd.run_show(conn, result.version_id, False, said.append)
+    human = "\n".join(said)
+    assert "APPROVED DESPITE the Gauntlet" in human
+    assert "hand-checked against the source facts" in human
+
+
+def test_generate_reports_progress_as_stages_complete(env):
+    """Five to seven minutes of silence is indistinguishable from a hang."""
+    conn, storage = env
+    said = []
+    package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, said.append,
+        judge_models=_judges())
+    output = "\n".join(said)
+    for stage in ("drafting and verifying", "rendering the PDF", "ATS check",
+                  "stage zero", "judge truth", "judge consistency", "judge writing"):
+        assert stage in output, f"no progress line for {stage}"

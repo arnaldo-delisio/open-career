@@ -9,7 +9,7 @@ database currently holds. All ids are TEXT, application-generated prefixed ULIDs
 
 | table | holds | notable constraints |
 |---|---|---|
-| `experiences` | containers facts hang off (role, project, education, venture, other) | `kind` CHECK enum |
+| `experiences` | containers facts hang off (role, project, education, venture, other) | `kind` CHECK enum; `start_date`/`end_date` are display labels stored as written ("September 2015" as legitimately as "2015-09"), null end = ongoing; the canonical time value behind a label comes from `packages/domain/dates.py`, which every comparison and ordering goes through |
 | `career_facts` | normalized assertions, the atoms of generation | `fact_type`, `status`, `source` CHECK enums; `user_approved` gates generation use |
 | `evidence` | things that back facts and capabilities | `evidence_type` CHECK enum; files live under `instance/` via StorageAdapter, the row stores a `locator`, never bytes |
 | `capabilities` | operational capability model | `name` UNIQUE; `strength` is the enum none/weak/moderate/strong, never a float |
@@ -17,7 +17,7 @@ database currently holds. All ids are TEXT, application-generated prefixed ULIDs
 | `career_goals` | long-horizon objectives | `horizon`, `status` CHECK enums |
 | `strategy_versions` | append-only versioned strategy | `version` UNIQUE; updates insert, never mutate; current = highest approved |
 | `strategy_role_family_allocations` | discrete 1-to-5 emphasis per family | CHECK 1..5, UNIQUE per (version, family) |
-| `user_profile` | single JSON row of the 28 canonical fields (OC-29) | `CHECK (id = 1)`, `json_valid`; closed field set validated in `packages/domain/profile.py` |
+| `user_profile` | single JSON row of the 28 canonical fields (OC-29) | `CHECK (id = 1)`, `json_valid`; closed field set validated in `packages/domain/profile.py`, which also holds the closed yes/no fields (`YES_NO_FIELDS`): synonyms are canonicalized on write, anything else is refused at the seam |
 | `profile_field_writes` | audit trail of every profile mutation | appended by the one write seam (`adapters/storage/sqlite_profile.py`) |
 
 ## Policy tables (migration 0004)

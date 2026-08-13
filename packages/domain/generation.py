@@ -22,6 +22,7 @@ from domain.cv_model import (
     SkillItem,
     parse_cv_model,
 )
+from domain.dates import chron_rank
 from domain.grounding import GroundingReport, GroundingVerifier
 from domain.ports import ModelAdapter
 
@@ -86,9 +87,10 @@ def build_verbatim_model(context: GenerationContext, generated_at: str) -> tuple
             experience_id=experience.id, title=experience.title, org=experience.org,
             start_date=experience.start_date, end_date=experience.end_date,
             bullets=bullets))
-    # Reverse-chronological employment order, as the verifier enforces it.
+    # Reverse-chronological employment order, as the verifier enforces it,
+    # ranked by the canonical time value behind each label (domain/dates.py).
     sections["experiences"].sort(
-        key=lambda e: (e.end_date or "9999-99", e.start_date or ""), reverse=True)
+        key=lambda e: chron_rank(e.start_date, e.end_date), reverse=True)
     skills = tuple(SkillItem(name=c.name, capability_ids=(c.id,))
                    for c in context.covered_capabilities())
     cv = CvModel(

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from domain.context import GenerationContext
 from domain.cv_model import Bullet, CvExperienceEntry, CvModel, SECTION_ORDER
+from domain.dates import chron_rank
 from domain.grounding_spec import (
     SPEC_VERSION,
     content_lemmas,
@@ -387,7 +388,9 @@ def _neq(rendered: str | None, canonical: str | None) -> bool:
     return normalize_chars(str(rendered or "")) != normalize_chars(str(canonical or ""))
 
 
-def _chron_key(row: dict) -> tuple[str, str]:
+def _chron_key(row: dict) -> tuple[tuple[int, int], tuple[int, int]]:
     """Sort key for reverse-chronological ordering: open-ended (current) rows
-    first, then by end date, then start date (canonical YYYY-MM strings)."""
-    return (row["end_date"] or "9999-99", row["start_date"] or "")
+    first, then by end date, then start date. The canonical time value comes
+    from domain/dates.py, never from the stored label's characters (the label
+    is what the CV displays, "September 2015" as legitimately as "2015-09")."""
+    return chron_rank(row["start_date"], row["end_date"])

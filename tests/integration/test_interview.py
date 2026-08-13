@@ -315,3 +315,93 @@ def test_deepen_walks_tier2_stance_facts_evidence_and_catchup(tmp_path):
         assert types == ["repository", "user_statement"]
     finally:
         conn.close()
+
+
+def test_a_restatement_without_a_number_never_overwrites_the_fact(tmp_path):
+    """The drive typed 'confirm' at the metric prompt and it silently replaced
+    a real achievement, which then rode into the exported PDF as a bullet
+    reading 'confirm'. The prompt asks for a number, so it validates for one;
+    the approved text survives an answer that has none."""
+    conn = _conn(tmp_path)
+    try:
+        fact = _approved_fact(conn, "Ran the client onboarding process")
+        says = []
+        # 'confirm' is refused, the second answer is blank (skip).
+        run_metric_catchup(conn, ask=_scripted(["confirm", ""]), say=says.append)
+        stored = SqliteCareerFactRepository(conn).list_all()[0]
+        assert stored.statement == "Ran the client onboarding process"
+        assert any("no number in it either" in s for s in says)
+    finally:
+        conn.close()
+
+
+def test_blank_at_the_metric_prompt_skips_exactly_as_promised(tmp_path):
+    conn = _conn(tmp_path)
+    try:
+        _approved_fact(conn, "Ran the client onboarding process")
+        prompts = []
+
+        def ask(prompt):
+            prompts.append(prompt)
+            return ""
+
+        run_metric_catchup(conn, ask=ask, say=lambda _: None)
+        assert len(prompts) == 1  # asked once, skipped, not re-asked
+        assert (SqliteCareerFactRepository(conn).list_all()[0].statement
+                == "Ran the client onboarding process")
+    finally:
+        conn.close()
+
+
+def test_tier1_accepts_y_n_and_stores_the_canonical_words(tmp_path):
+    """Answering 'y' to a (yes/no) prompt used to persist 'y' and produce a
+    package the Gauntlet could never pass (drive finding)."""
+    answers = [
+        "Italy", "y", "n", "remote", "y", "1 month",
+        "", "",  # both compensation policies skipped
+    ]
+    conn = _conn(tmp_path)
+    try:
+        run_tier1(conn, ask=_scripted(answers), say=lambda _: None)
+        fields = SqliteUserProfileRepository(conn).get_fields()
+        assert fields["authorized_in_country"] == "yes"
+        assert fields["needs_sponsorship"] == "no"
+        assert fields["relocation"] == "yes"
+    finally:
+        conn.close()
+
+
+def test_tier1_re_asks_an_answer_outside_the_closed_set(tmp_path):
+    answers = [
+        "Italy", "maybe", "yes", "no", "remote", "no", "1 month", "", "",
+    ]
+    conn = _conn(tmp_path)
+    try:
+        says = []
+        run_tier1(conn, ask=_scripted(answers), say=says.append)
+        fields = SqliteUserProfileRepository(conn).get_fields()
+        assert fields["authorized_in_country"] == "yes"
+        assert any("is not an answer to 'authorized_in_country'" in s for s in says)
+    finally:
+        conn.close()
+
+
+def test_tier1_names_the_authorization_contradiction_and_offers_a_revision(tmp_path):
+    """Authorized AND needing sponsorship read as opposites downstream. The
+    conflict is named while the human is still here; the answers are never
+    silently corrected."""
+    answers = [
+        "Italy", "yes", "yes", "remote", "no", "1 month",
+        "n",           # no, do not keep both as given
+        "yes", "no",   # revised authorization answers
+        "", "",        # compensation policies skipped
+    ]
+    conn = _conn(tmp_path)
+    try:
+        says = []
+        run_tier1(conn, ask=_scripted(answers), say=says.append)
+        assert any("need visa sponsorship" in s for s in says)
+        fields = SqliteUserProfileRepository(conn).get_fields()
+        assert (fields["authorized_in_country"], fields["needs_sponsorship"]) == ("yes", "no")
+    finally:
+        conn.close()

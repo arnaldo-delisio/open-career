@@ -529,3 +529,89 @@ def test_projection_copies_the_closed_strings_verbatim_and_derives_forms():
     assert "no sponsorship required" not in projection["allowed_forms"]
     empty = build_work_authorization_projection({})
     assert empty["allowed_forms"] == []
+
+
+# -- the drive regression: human date labels ----------------------------------
+
+# The driver's real four-role CV, verbatim. Two of these roles invert
+# alphabetically (September > July, June > February), which is exactly what a
+# raw string comparison reported as "start follows end": no CV written the way
+# people write CVs could clear stage zero.
+DRIVER_ROLES = (
+    ("exp_1", "Support Engineer", "Alpha", "September 2015", "July 2017"),
+    ("exp_2", "Engineer", "Beta", "August 2017", "May 2019"),
+    ("exp_3", "Senior Engineer", "Gamma", "June 2019", "February 2022"),
+    ("exp_4", "Forward Deployed Engineer", "Acme", "March 2022", None),
+)
+
+
+def _driver_case(order=None):
+    """The driver's CV as a full audit bundle, entries in reverse-chronological
+    order (open-ended role first) unless `order` says otherwise."""
+    roles = {r[0]: r for r in DRIVER_ROLES}
+    ids = order or [r[0] for r in reversed(DRIVER_ROLES)]
+    snapshot = make_snapshot()
+    view = snapshot["renderable_grounding_view"]
+    view["experiences"] = {}
+    view["facts"] = {}
+    entries = []
+    for n, exp_id in enumerate(ids, start=1):
+        _, title, org, start, end = roles[exp_id]
+        fact_id = f"fact_{exp_id}"
+        view["experiences"][exp_id] = {"kind": "role", "title": title, "org": org,
+                                       "start_date": start, "end_date": end}
+        view["facts"][fact_id] = {"statement": FACT, "fact_type": "achievement",
+                                  "experience_id": exp_id}
+        entries.append(CvExperienceEntry(
+            experience_id=exp_id, title=title, org=org, start_date=start,
+            end_date=end, bullets=(Bullet(text=FACT, fact_ids=(fact_id,)),)))
+    snapshot["selection"]["capabilities"] = [{
+        "capability_id": "cap_1", "covered": True,
+        "chains": [{"facts": [{"fact_id": f"fact_{i}"} for i in ids]}]}]
+    cv = make_cv()
+    cv = CvModel(**{**cv.__dict__, "experiences": tuple(entries)})
+    return make_case(cv=cv, snapshot=snapshot)
+
+
+def test_human_month_year_dates_cohere_and_order():
+    """The drive's blocker: 'September 2015' to 'July 2017' is a coherent role
+    and the current role leads the section."""
+    result = _by_rule(run_invariants(**_driver_case()))["date-coherence"]
+    assert result.disposition == PASS, result.detail
+
+
+def test_human_dates_out_of_order_still_fail():
+    """The rule did not stop working: the same labels in the wrong order (a
+    2015 role rendered above the current one) are still caught."""
+    case = _driver_case(order=["exp_1", "exp_4", "exp_3", "exp_2"])
+    # The stored trail claims a pass (the stale-bundle class), so stage zero
+    # reaches the date rule instead of stopping at audit-integrity.
+    case["verifier_report_json"] = json.dumps(
+        {"final": {"passed": True, "spec_version": SPEC_VERSION, "findings": []},
+         "attempts": 1, "fallback_used": False, "dropped": []})
+    result = _by_rule(run_invariants(**case))["date-coherence"]
+    assert result.disposition == FAIL and "reverse-chronological" in result.detail
+
+
+def test_a_month_name_date_postdating_generated_at_is_caught():
+    """The horizon check reads month-name dates too: it used to see only the
+    bare year in 'January 2030'."""
+    case = _driver_case()
+    case["extracted_text"] = case["extracted_text"] + "\nExpected through January 2030"
+    result = _by_rule(run_invariants(**case))["date-coherence"]
+    assert result.disposition == FAIL and "2030-01" in result.detail
+
+
+def test_an_unreadable_date_is_attention_never_a_false_contradiction():
+    """A label the parser cannot read is reported as unreadable, not asserted
+    to be a contradiction: the run continues to the judges, capped."""
+    case = _driver_case()
+    entry = case["cv"].experiences[0]
+    broken = CvExperienceEntry(**{**entry.__dict__, "start_date": "mid-2022"})
+    case["cv"] = CvModel(**{**case["cv"].__dict__,
+                            "experiences": (broken,) + case["cv"].experiences[1:]})
+    case["snapshot"]["renderable_grounding_view"]["experiences"][
+        entry.experience_id]["start_date"] = "mid-2022"
+    result = _by_rule(run_invariants(**case))["date-coherence"]
+    assert result.disposition == ATTENTION
+    assert "mid-2022" in result.detail

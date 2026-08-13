@@ -88,7 +88,8 @@ class GenerationPipeline:
                  renderer: CvRenderer, extractor: PdfTextExtractor,
                  drafter: CvDraftingService | None,
                  heartbeat_repo_factory: Callable[
-                     [], AbstractContextManager[PackageRepository]] | None = None):
+                     [], AbstractContextManager[PackageRepository]] | None = None,
+                 progress: Callable[[str], None] | None = None):
         self._repo = repo
         self._storage = storage
         self._renderer = renderer
@@ -99,6 +100,10 @@ class GenerationPipeline:
         # dedicated connection inside the heartbeat thread.
         self._heartbeat_repo_factory = (heartbeat_repo_factory
                                         or (lambda: nullcontext(repo)))
+        # Progress reporting, injected: generation is minutes of silence
+        # otherwise, and a silent multi-minute model call is indistinguishable
+        # from a hang. The pipeline stays pure: it emits lines, it never prints.
+        self._progress = progress or (lambda _line: None)
 
     def generate(self, package_id: str, context: GenerationContext,
                  page_budget: int = DEFAULT_PAGE_BUDGET,
@@ -167,6 +172,10 @@ class GenerationPipeline:
              external_findings: tuple[str, ...] = ()) -> PipelineResult:
         repo, generation = self._repo, version.lease_generation
 
+        def stage(name: str, line: str) -> None:
+            stage_ref[0] = name
+            self._progress(line)
+
         def guard() -> None:
             """Lease check immediately before each object write."""
             if heartbeat.lost.is_set() or not repo.check_lease(version.id, owner, generation):
@@ -175,7 +184,7 @@ class GenerationPipeline:
         def locator(name: str) -> str:
             return object_locator(version.package_id, version.version, generation, name)
 
-        stage_ref[0] = "context-snapshot"
+        stage("context-snapshot", "persisting the generation context snapshot")
         # Stage 1: persist the exact canonical context snapshot (locator
         # recorded deterministically before object creation). The recorded
         # hash covers the stored bytes read back, not the in-memory JSON, so
@@ -189,7 +198,7 @@ class GenerationPipeline:
                              context_snapshot_locator=snapshot_locator,
                              input_context_hash=snapshot_hash)
 
-        stage_ref[0] = "draft"
+        stage("draft", "drafting and verifying the CV (model call; this is the slow one)")
         # Stage 2: draft and verify (model work runs outside any write txn).
         generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         if edited_model is not None:
@@ -221,7 +230,7 @@ class GenerationPipeline:
             repo.fail(version.id, owner, generation, failure)
             return PipelineResult(version.id, FAILED, "grounding verification failed")
 
-        stage_ref[0] = "render"
+        stage("render", "rendering the PDF")
         # Stage 3: render, store the artifact write-once, then read the stored
         # bytes back once: the recorded hash and the ATS check both run on
         # those exact bytes, never the pre-storage buffer.
@@ -234,7 +243,7 @@ class GenerationPipeline:
         repo.record_progress(version.id, owner, generation,
                              artifact_locator=artifact_locator, artifact_hash=artifact_hash)
 
-        stage_ref[0] = "ats-check"
+        stage("ats-check", "running the ATS check on the stored bytes")
         # Stage 4: the mandatory separate pdftotext step, on the stored bytes.
         ats_report = check_ats(self._extractor.extract_layout(stored_pdf), draft.cv,
                                page_budget)
@@ -249,7 +258,7 @@ class GenerationPipeline:
             repo.fail(version.id, owner, generation, failure)
             return PipelineResult(version.id, FAILED, "ATS check failed")
 
-        stage_ref[0] = "finalize"
+        stage("finalize", "finalizing the version")
         # Finalize: heartbeat stopped and joined first, then one atomic
         # lease-validated transition carrying the full audit bundle.
         heartbeat.stop_and_join()

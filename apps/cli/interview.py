@@ -26,7 +26,7 @@ from domain.edges import CareerEdge
 from domain.entities import CareerFact, Evidence
 from domain.ids import new_id
 from domain.policies import EEO_STANCES, PERIOD_FACTORS
-from domain.profile import InvalidProfileValueError
+from domain.profile import InvalidProfileValueError, authorization_contradiction
 from domain.questions import TIER1, TIER2, Question, questions
 
 Ask = Callable[[str], str]
@@ -76,12 +76,22 @@ def offer_quantifier(facts_repo: SqliteCareerFactRepository, fact_id: str,
     backfill). Skip costs one keypress."""
     if fact_type not in QUANTIFIABLE_FACT_TYPES or not is_unquantified(statement):
         return
-    restated = ask(
-        "  No number in that fact. Restate it with one (e.g. 'N clients',"
-        " 'X/day', 'team of Y'; blank to skip): ").strip()
-    if restated:
+    while True:
+        restated = ask(
+            "  No number in that fact. Restate it with one (e.g. 'N clients',"
+            " 'X/day', 'team of Y'; blank to skip): ").strip()
+        if not restated:
+            return  # blank skips, exactly as the prompt promises
+        if is_unquantified(restated):
+            # The approved statement is never overwritten by an answer that
+            # does not do what the prompt asked: a stray 'confirm' typed here
+            # used to replace a real achievement and ride into the PDF.
+            say("  that restatement has no number in it either; the fact is"
+                " unchanged (blank to skip)")
+            continue
         facts_repo.set_approval(fact_id, restated, _now())
         say("  updated (user edit, approved).")
+        return
 
 
 def _ask_profile_question(profile_repo: SqliteUserProfileRepository,
@@ -97,6 +107,23 @@ def _ask_profile_question(profile_repo: SqliteUserProfileRepository,
             return
         except InvalidProfileValueError as e:
             say(f"invalid value: {e}")
+
+
+def _resolve_authorization_contradiction(profile_repo: SqliteUserProfileRepository,
+                                         tier1: list[Question], ask: Ask, say: Say) -> None:
+    """Two answers that read as opposites downstream are named here, once,
+    while the human is still in the prompt. Never silently corrected: the
+    combination can be genuinely true (a time-limited permit), so the human
+    keeps or revises it."""
+    conflict = authorization_contradiction(profile_repo.get_fields())
+    if conflict is None:
+        return
+    say(f"\nheads up: {conflict}.")
+    if ask_yes_no(ask, say, "Keep both answers as given?", True):
+        return
+    for question in tier1:
+        if question.key in ("authorized_in_country", "needs_sponsorship"):
+            _ask_profile_question(profile_repo, question, ask, say)
 
 
 def _ask_int(ask: Ask, say: Say, prompt: str) -> int | None:
@@ -192,10 +219,11 @@ def run_tier1(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
     policies = SqliteUserPolicyRepository(conn)
     say("\nMust-ask questions (blank skips; a skipped item surfaces as a named"
         " manual action when an application needs it):")
-    for question in questions(kind="profile", tier=TIER1):
-        if question.key in BASICS_ASKED_IN_CV_WALK:
-            continue  # already asked in this sitting's basics walk
+    tier1 = [q for q in questions(kind="profile", tier=TIER1)
+             if q.key not in BASICS_ASKED_IN_CV_WALK]
+    for question in tier1:
         _ask_profile_question(profile_repo, question, ask, say)
+    _resolve_authorization_contradiction(profile_repo, tier1, ask, say)
     _ask_tier_policies(policies, TIER1, ask, say)
     say("\nSitting one done. Whenever you want more depth:"
         " `open-career deepen` (remaining fields, evidence, metric catch-up),"

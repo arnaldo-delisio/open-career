@@ -967,3 +967,69 @@ def test_cli_onboard_degrades_when_model_call_fails(tmp_path, monkeypatch, capsy
     assert expected in captured.err
     assert "Continuing without the CV" in captured.out
     assert "Onboarding complete." in captured.out
+
+
+def _extraction_with_dates(start, end):
+    payload = json.loads(EXTRACTION)
+    payload["experiences"][0]["start_date"] = start
+    payload["experiences"][0]["end_date"] = end
+    return json.dumps(payload)
+
+
+def test_human_month_year_dates_are_confirmed_without_a_re_ask(instance, tmp_path):
+    """The dates people actually write are accepted as they are: they are the
+    CV's display text, and the canonical time value is derived from them."""
+    class Model(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            return _extraction_with_dates("September 2015", "July 2017")
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    prompts = []
+
+    def ask(prompt):
+        prompts.append(prompt)
+        return {"confirm/edit/reject": "confirm"}.get(
+            prompt.split(" (")[0], "confirm" if "confirm/edit" in prompt else "")
+
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), Model(), cv,
+                       ask=ask, say=lambda _: None)
+        (experience,) = SqliteExperienceRepository(conn).list_all()
+        assert (experience.start_date, experience.end_date) == ("September 2015", "July 2017")
+        assert not any("Start date" in p for p in prompts)  # never re-asked
+    finally:
+        conn.close()
+
+
+def test_an_unreadable_extracted_date_is_asked_for_never_stored_silently(instance, tmp_path):
+    """A date the canonical parser cannot read is a package that could never
+    clear the Gauntlet's date-coherence check, discovered six minutes later.
+    It is fixed here, at the point of entry."""
+    class Model(ModelAdapter):
+        def complete(self, prompt: str) -> str:
+            return _extraction_with_dates("mid-2015", "Present")
+
+    cv = tmp_path / "cv.txt"
+    cv.write_text("Jane Placeholder\n")
+    answers = {"confirm/edit/reject": "confirm", "Start date": "September 2015"}
+    says = []
+
+    def ask(prompt):
+        for key, value in answers.items():
+            if key in prompt:
+                return value
+        return ""
+
+    conn = _conn(instance)
+    try:
+        run_onboarding(conn, LocalStorageAdapter(instance), Model(), cv,
+                       ask=ask, say=says.append)
+        (experience,) = SqliteExperienceRepository(conn).list_all()
+        assert experience.start_date == "September 2015"
+        # 'Present' is the ongoing role's null, the one form the rules read.
+        assert experience.end_date is None
+        assert any("is not a date this system can order" in s for s in says)
+    finally:
+        conn.close()

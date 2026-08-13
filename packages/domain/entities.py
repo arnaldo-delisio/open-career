@@ -26,7 +26,13 @@ ProfileWriteSource = Literal["user_edit", "resolution"]
 
 @dataclass(frozen=True)
 class Experience:
-    """A container facts hang off: a role, a project, a venture."""
+    """A container facts hang off: a role, a project, a venture.
+
+    `start_date` / `end_date` are DISPLAY labels, stored as the user wrote
+    them and rendered character for character on the CV; a null `end_date` is
+    the one representation of an ongoing role. The canonical time value behind
+    a label comes from `domain/dates.py`, which every comparison and ordering
+    goes through: never compare or sort these strings directly."""
 
     id: str
     kind: ExperienceKind

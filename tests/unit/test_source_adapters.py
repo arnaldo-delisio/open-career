@@ -350,6 +350,70 @@ def test_smartrecruiters_totalfound_mismatch_degrades():
         SmartRecruitersAdapter(fetcher).poll("Acme1")
 
 
+EMPTY_POSTINGS = {"offset": 0, "limit": 100, "totalFound": 0, "content": []}
+
+
+def smartrecruiters_transport(*, tenant_exists: bool, postings=None):
+    """The vendor's real shapes (verified live 2026-08-13): the postings
+    collection answers 200 totalFound 0 for ANY company id, real or invented,
+    while the departments resource 404s on an unknown id."""
+    return {
+        "/departments": (200, {"totalFound": 1, "content": [{"id": 1}]})
+        if tenant_exists else (404, {"httpCode": 404, "code": "RESOURCE_NOT_FOUND"}),
+        "/postings": (200, postings if postings is not None else EMPTY_POSTINGS),
+    }
+
+
+def test_smartrecruiters_probe_rejects_a_bogus_slug_the_postings_api_accepts():
+    """The postings collection cannot verify tenant existence, so the probe
+    reads the departments resource: an invented slug fails the healthcheck
+    even though its postings response is a valid 200."""
+    fetcher, transport = make_fetcher(
+        smartrecruiters_transport(tenant_exists=False))
+    assert SmartRecruitersAdapter(fetcher).healthcheck("nosuchtenant") is False
+    assert all("/departments" in url for url, _headers in transport.requests)
+
+
+def test_smartrecruiters_probe_passes_a_real_tenant_with_or_without_postings():
+    """A real tenant verifies on positive evidence of existence, which is
+    independent of whether it currently has open postings."""
+    with_postings, _ = make_fetcher(smartrecruiters_transport(
+        tenant_exists=True, postings=fixture("smartrecruiters_postings.json")))
+    assert SmartRecruitersAdapter(with_postings).healthcheck("Acme1") is True
+    empty, _ = make_fetcher(smartrecruiters_transport(tenant_exists=True))
+    assert SmartRecruitersAdapter(empty).healthcheck("Acme1") is True
+
+
+@pytest.mark.parametrize("body", [
+    {"error": "company not found"},  # error document served with a 200
+    {"content": []},  # partial: the collection shape lacks totalFound
+    {"totalFound": 3},  # partial: no content list
+    {"totalFound": True, "content": []},  # a bool is not a count
+])
+def test_smartrecruiters_probe_fails_on_a_200_that_is_not_the_collection_shape(body):
+    """Only a schema-valid departments collection is positive evidence of
+    tenant existence; a partial or error body served with a 200 must not
+    enable a candidate."""
+    fetcher, _ = make_fetcher({"/departments": (200, body)})
+    assert SmartRecruitersAdapter(fetcher).healthcheck("Acme1") is False
+
+
+def test_smartrecruiters_probe_accepts_a_real_tenant_with_no_departments():
+    """totalFound 0 is a legitimate departments response for a real tenant
+    (observed live), so it verifies."""
+    fetcher, _ = make_fetcher({"/departments": (200, {"totalFound": 0, "content": []})})
+    assert SmartRecruitersAdapter(fetcher).healthcheck("Acme1") is True
+
+
+def test_smartrecruiters_zero_posting_poll_is_a_complete_successful_snapshot():
+    """Probing is not polling: for an already verified tenant, a schema-valid
+    zero-posting feed stays a complete successful snapshot (§1)."""
+    fetcher, _ = make_fetcher({"/postings": (200, EMPTY_POSTINGS)})
+    payload = SmartRecruitersAdapter(fetcher).poll("Acme1")
+    assert payload.jobs == ()
+    assert json.loads(payload.completion_json())["complete"] is True
+
+
 # ----------------------------------------------------------------- collision
 
 def test_byte_identical_duplicate_records_collapse():

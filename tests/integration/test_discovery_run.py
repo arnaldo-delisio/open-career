@@ -11,6 +11,7 @@ import pytest
 
 from adapters.sources.greenhouse import GreenhouseAdapter
 from adapters.sources.http import HttpFetcher
+from adapters.sources.smartrecruiters import SmartRecruitersAdapter
 from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import migrate
 from adapters.storage.sqlite_discovery import (
@@ -166,6 +167,92 @@ def test_probe_enables_candidate_then_poll_runs(instance):
     assert refreshed.status == "enabled"  # verification before enablement (§2)
     assert refreshed.last_poll_outcome == "success"
     assert len(SqliteOpportunityRepository(conn).list_for_source(source.id)) == 1
+
+
+def test_smartrecruiters_candidate_is_not_enabled_by_an_empty_postings_200(
+        instance):
+    """The vendor's postings collection answers 200 totalFound 0 for any
+    company id, so it cannot verify existence: an invented slug stays a
+    candidate and ages into a later re-probe instead of being enabled and
+    polled forever as a healthy source."""
+    conn, storage = instance
+    source = seed_source(conn, status="candidate")
+    repo = SqliteSourceRegistryRepository(conn)
+    conn.execute("UPDATE sources SET ats_type = 'smartrecruiters',"
+                 " tenant_slug = 'nosuchtenant' WHERE id = ?", (source.id,))
+    conn.commit()
+
+    def transport(url, headers, timeout):
+        if "/departments" in url:
+            return 404, b'{"httpCode":404,"code":"RESOURCE_NOT_FOUND"}'
+        return 200, b'{"offset":0,"limit":100,"totalFound":0,"content":[]}'
+
+    fetcher = HttpFetcher(transport=transport, sleep=lambda _s: None,
+                          clock=lambda: 0.0, min_interval_s=0)
+    run = run_discovery(conn, storage, FakeModel(),
+                        {"smartrecruiters": SmartRecruitersAdapter(fetcher)},
+                        config=DiscoveryConfig(poll_interval_days=0),
+                        say=lambda *_a, **_k: None)
+    outcome = json.loads(run.source_outcomes_json)["sources"][source.id]
+    assert outcome["probe"] == "failed"
+    refreshed = repo.get(source.id)
+    assert refreshed.status == "candidate"
+    assert refreshed.next_probe_at  # aged for a normal later re-probe
+    assert SqliteSnapshotRepository(conn).list_for_source(source.id) == []
+
+
+def test_smartrecruiters_real_tenant_probes_enabled_then_polls(instance):
+    conn, storage = instance
+    source = seed_source(conn, status="candidate")
+    conn.execute("UPDATE sources SET ats_type = 'smartrecruiters',"
+                 " tenant_slug = 'Acme1' WHERE id = ?", (source.id,))
+    conn.commit()
+    posting = {"id": "744000012345678", "name": "Backend Engineer",
+               "location": {"city": "Milan", "country": "it"}}
+
+    def transport(url, headers, timeout):
+        if "/departments" in url:
+            return 200, b'{"totalFound":1,"content":[{"id":1}]}'
+        return 200, json.dumps({"offset": 0, "limit": 100, "totalFound": 1,
+                                "content": [posting]}).encode()
+
+    fetcher = HttpFetcher(transport=transport, sleep=lambda _s: None,
+                          clock=lambda: 0.0, min_interval_s=0)
+    run_discovery(conn, storage, FakeModel(),
+                  {"smartrecruiters": SmartRecruitersAdapter(fetcher)},
+                  config=DiscoveryConfig(poll_interval_days=0),
+                  say=lambda *_a, **_k: None)
+    refreshed = SqliteSourceRegistryRepository(conn).get(source.id)
+    assert refreshed.status == "enabled"
+    assert refreshed.last_poll_outcome == "success"
+
+
+def test_enabled_smartrecruiters_source_polling_to_zero_still_succeeds(instance):
+    """Non-regression: probing asks whether a tenant exists, polling asks what
+    it is advertising. For an already verified tenant a schema-valid
+    zero-posting response is still a complete successful snapshot (§1)."""
+    conn, storage = instance
+    source = seed_source(conn)
+    conn.execute("UPDATE sources SET ats_type = 'smartrecruiters',"
+                 " tenant_slug = 'Acme1' WHERE id = ?", (source.id,))
+    conn.commit()
+
+    def transport(url, headers, timeout):
+        assert "/departments" not in url  # enabled sources are polled, not probed
+        return 200, b'{"offset":0,"limit":100,"totalFound":0,"content":[]}'
+
+    fetcher = HttpFetcher(transport=transport, sleep=lambda _s: None,
+                          clock=lambda: 0.0, min_interval_s=0)
+    run_discovery(conn, storage, FakeModel(),
+                  {"smartrecruiters": SmartRecruitersAdapter(fetcher)},
+                  config=DiscoveryConfig(poll_interval_days=0),
+                  say=lambda *_a, **_k: None)
+    refreshed = SqliteSourceRegistryRepository(conn).get(source.id)
+    assert refreshed.status == "enabled"
+    assert refreshed.last_poll_outcome == "success"
+    assert refreshed.consecutive_failures == 0
+    snapshots = SqliteSnapshotRepository(conn).list_for_source(source.id)
+    assert len(snapshots) == 1 and snapshots[0].posting_count == 0
 
 
 # ------------------------------------------------------------------ closure

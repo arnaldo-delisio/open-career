@@ -5,6 +5,13 @@ Completeness: pages advance by offset until totalFound is covered; a page
 count disagreeing with totalFound degrades the poll. experienceLevel.id is a
 structured seniority field, mapped through a tested constant. Opportunities
 carry apply_support 'none' (no V0 fill).
+
+Probing is not polling. The postings collection cannot answer "does this
+tenant exist": SmartRecruiters serves HTTP 200 with totalFound 0 for any
+company id, real or invented, so the §2 verification-before-enablement probe
+uses the departments resource instead, which 404s on an unknown id. Polling is
+unaffected: for an already verified tenant a schema-valid zero-posting
+response stays a complete successful snapshot (§1).
 """
 
 from adapters.sources.base import (
@@ -13,6 +20,7 @@ from adapters.sources.base import (
     PollPayload,
     require,
 )
+from adapters.sources.http import FetchError, RefusedHostError
 from domain.normalization import normalize_salary, normalize_seniority
 
 PAGE_SIZE = 100
@@ -75,6 +83,31 @@ class SmartRecruitersAdapter(BaseSourceAdapter):
                 f" totalFound {total}; truncated feed")
         return PollPayload(pages=tuple(pages), jobs=tuple(self._dedupe(jobs)),
                            page_count=len(pages))
+
+    def healthcheck(self, tenant_slug: str) -> bool:
+        """Tenant existence, verified against the departments resource rather
+        than the postings collection (see module docstring). Verified live
+        2026-08-13: a real tenant answers 200 whether or not it has open
+        postings, an unknown id answers 404 RESOURCE_NOT_FOUND, while the
+        postings collection answers 200 totalFound 0 for both. A non-404
+        failure (refused host, malformed body, upstream error) is a failed
+        check like any other, so the source stays a candidate and ages into a
+        later re-probe."""
+        url = (f"https://api.smartrecruiters.com/v1/companies/{tenant_slug}"
+               f"/departments")
+        try:
+            body = self._fetcher.fetch_json(url)
+        except (FetchError, RefusedHostError, ValueError):
+            return False
+        # A tenant that exists returns the full collection shape, totalFound
+        # included and legitimately 0 (verified live on real tenants with no
+        # departments configured). Anything less is not positive evidence:
+        # an error document or a partial body served with a 200 must not
+        # enable a candidate, which is the failure this probe exists to close.
+        return (isinstance(body, dict) and isinstance(body.get("content"), list)
+                and isinstance(body.get("totalFound"), int)
+                and not isinstance(body.get("totalFound"), bool)
+                and body["totalFound"] >= 0)
 
     def jobs_from_pages(self, pages: list) -> list:
         return [job for page in pages for job in page.get("content", [])]

@@ -23,6 +23,7 @@ from adapters.storage.sqlite_entities import (
     SqliteExperienceRepository,
 )
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
+from domain import dates
 from domain.edges import CareerEdge
 from domain.entities import Capability, CareerFact, CareerGoal, Evidence, Experience
 from domain.extraction import CvExtraction, CvExtractionService
@@ -202,6 +203,32 @@ def _ingest_cv(conn: sqlite3.Connection, storage: StorageAdapter, model: ModelAd
     return cv_evidence, extraction
 
 
+def _stored_date(value: str | None) -> str | None:
+    """The stored form of a date label: an open-ended role stores null, which
+    is the one representation the ordering and coherence rules read as
+    'has not ended' (domain/dates.py)."""
+    return None if dates.is_open_ended(value) else value
+
+
+def _ask_date(ask: Callable[[str], str], say: Callable[[str], None],
+              label: str, current: str | None, editing: bool) -> str | None:
+    """A date the system can compare and order. Asked when the walk is in edit
+    mode, and whenever the extracted label is one the canonical parser cannot
+    read: an unreadable date silently accepted here is a package that can never
+    clear the Gauntlet's date-coherence check, discovered six minutes later."""
+    if not editing and dates.is_readable(current):
+        return _stored_date(current)
+    if not editing:
+        say(f"  '{current}' is not a date this system can order.")
+    while True:
+        raw = ask(f"{label} [{current or ''}]: ").strip()
+        value = raw or current
+        if dates.is_readable(value):
+            return _stored_date(value)
+        say("  expected a month and year (e.g. '2015-09', 'September 2015',"
+            " '09/2015'), a year ('2015'), or 'present' for an ongoing role")
+
+
 def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
                         ask: Callable[[str], str], say: Callable[[str], None]) -> list[str | None]:
     """Walk each extracted experience: confirm/edit/reject. An experience is
@@ -221,15 +248,16 @@ def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
     for row in sorted(existing_rows,
                       key=lambda e: (e.display_order is None, e.display_order)):
         by_shape.setdefault(
-            (row.kind, row.title, row.org, row.start_date, row.end_date),
-            []).append(row)
+            (row.kind, row.title, row.org, _stored_date(row.start_date),
+             _stored_date(row.end_date)), []).append(row)
     say(f"Extracted {len(extraction.experiences)} experiences. Confirm, edit, or reject each.")
     experience_ids: list[str | None] = []
     order = max((e.display_order for e in existing_rows
                  if e.display_order is not None), default=-1) + 1
     for draft in extraction.experiences:
         queue = by_shape.get(
-            (draft.kind, draft.title, draft.org, draft.start_date, draft.end_date))
+            (draft.kind, draft.title, draft.org, _stored_date(draft.start_date),
+             _stored_date(draft.end_date)))
         if queue:
             say(f"\n[{draft.kind}] {draft.title} @ {draft.org}: already"
                 " confirmed earlier; reusing it.")
@@ -243,11 +271,12 @@ def _review_experiences(conn: sqlite3.Connection, extraction: CvExtraction,
             experience_ids.append(None)
             continue
         title, org, start_date, end_date = draft.title, draft.org, draft.start_date, draft.end_date
-        if action in ("edit", "e"):
+        editing = action in ("edit", "e")
+        if editing:
             title = ask(f"Title [{title}]: ").strip() or title
             org = ask(f"Org [{org}]: ").strip() or org
-            start_date = ask(f"Start date [{start_date}]: ").strip() or start_date
-            end_date = ask(f"End date [{end_date}]: ").strip() or end_date
+        start_date = _ask_date(ask, say, "Start date", start_date, editing)
+        end_date = _ask_date(ask, say, "End date", end_date, editing)
         experience = Experience(
             id=new_id("exp"), kind=draft.kind, title=title, org=org,
             start_date=start_date, end_date=end_date, summary=draft.summary,

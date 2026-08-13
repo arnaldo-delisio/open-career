@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from domain.policies import CANONICAL_POLICY_KEYS
-from domain.profile import CANONICAL_PROFILE_FIELDS
+from domain.profile import CANONICAL_PROFILE_FIELDS, YES_NO_CHOICES
 
 QuestionKind = Literal["profile", "policy"]
 Tier = Literal["TIER1", "TIER2", "DEPTH", "FLOOR"]
@@ -63,16 +63,16 @@ _IDENTITY_CONTACT = (
 _TIER1_LOGISTICS = (
     Question("authorized_in_country", "profile", TIER1,
              "Authorized to work in your target country?",
-             "work-authorization question; eligibility gate", choices=("yes", "no")),
+             "work-authorization question; eligibility gate", choices=YES_NO_CHOICES),
     Question("needs_sponsorship", "profile", TIER1,
              "Will you need visa sponsorship?",
-             "sponsorship question; eligibility gate", choices=("yes", "no")),
+             "sponsorship question; eligibility gate", choices=YES_NO_CHOICES),
     Question("remote_preference", "profile", TIER1,
              "Remote preference (e.g. remote / hybrid / onsite)",
              "remote-policy question; eligibility gate"),
     Question("relocation", "profile", TIER1,
              "Willing to relocate?",
-             "relocation question; eligibility gate", choices=("yes", "no")),
+             "relocation question; eligibility gate", choices=YES_NO_CHOICES),
     Question("notice_period", "profile", TIER1,
              "Notice period (e.g. 1 month)",
              "availability question on application forms"),
@@ -110,7 +110,7 @@ _TIER2_PROFILE = (
              "consent checkboxes where forms carry them"),
     Question("future_contact_consent", "profile", TIER2,
              "Standing future-contact consent",
-             "talent-pool consent where forms carry it", choices=("yes", "no")),
+             "talent-pool consent where forms carry it", choices=YES_NO_CHOICES),
     # EEO answers fill platform-templated blocks only under stance
     # answer_honestly; empty fields plus the stance are structural skip vs
     # decline, never ambiguous blanks (spec, eeo_stance).

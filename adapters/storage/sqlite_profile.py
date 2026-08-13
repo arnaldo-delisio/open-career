@@ -32,8 +32,11 @@ class SqliteUserProfileRepository(UserProfileRepository):
     def set_field(self, field: str, value: str | None, source: str,
                   resolution_id: str | None = None) -> None:
         validate_profile_field(field)
-        validate_profile_value(field, value)
+        # Normalize, then validate the canonical form: an accepted synonym
+        # ("y") must reach validation as what it means ("yes"), and anything
+        # the normalizer did not recognize still fails closed here.
         value = normalize_profile_value(field, value)
+        validate_profile_value(field, value)
         if source == "resolution":
             raise NotImplementedError(
                 "resolution-sourced profile writes arrive with the Resolution protocol"

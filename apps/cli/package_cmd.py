@@ -38,6 +38,7 @@ from domain.edges import CareerEdge
 from domain.entities import CareerFact, Evidence
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from domain.gauntlet import SUITE_VERSION, GauntletRunner, GauntletRunResult
+from domain.gauntlet_invariants import FAIL as FAIL_DISPOSITION
 from domain.gauntlet_judges import JUDGES, PROMPT_FILES
 from domain.generation import CvDraftingService
 from domain.grounding import GroundingVerifier
@@ -101,7 +102,8 @@ def build_context(conn: sqlite3.Connection, family_ref: str) -> GenerationContex
 
 
 def make_pipeline(conn: sqlite3.Connection, storage: StorageAdapter,
-                  model: ModelAdapter | None) -> GenerationPipeline:
+                  model: ModelAdapter | None,
+                  say: Say | None = None) -> GenerationPipeline:
     from adapters.render.html_pdf import PlaywrightCvRenderer
     from adapters.render.pdftext import PopplerPdfTextExtractor
 
@@ -109,7 +111,8 @@ def make_pipeline(conn: sqlite3.Connection, storage: StorageAdapter,
                if model is not None else None)
     return GenerationPipeline(SqlitePackageRepository(conn), storage,
                               PlaywrightCvRenderer(), PopplerPdfTextExtractor(), drafter,
-                              heartbeat_repo_factory=heartbeat_repo_factory(conn))
+                              heartbeat_repo_factory=heartbeat_repo_factory(conn),
+                              progress=(lambda line: say(f"  {line}...")) if say else None)
 
 
 def heartbeat_repo_factory(conn: sqlite3.Connection):
@@ -149,7 +152,9 @@ def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
         say(f"gap: targeted capability '{gap.name}' has no eligible evidence chain")
     external_findings = (_blocking_findings(repo, findings_from)
                          if findings_from else ())
-    result = make_pipeline(conn, storage, model).generate(
+    say(f"generating a package for '{family_ref}' (this takes minutes: one"
+        " drafting model call, then three judges)")
+    result = make_pipeline(conn, storage, model, say).generate(
         package.id, context, page_budget=page_budget, edited_model=edited_model,
         external_findings=external_findings)
     say(f"version {result.version_id}: {result.status} ({result.detail})")
@@ -161,9 +166,69 @@ def run_generate(conn: sqlite3.Connection, storage: StorageAdapter,
         version = repo.get_version(result.version_id)
         gauntlet = _run_gauntlet_attempt(conn, storage, judge_models, version, say)
         if gauntlet.verdict == "FAIL":
-            say(f"regenerate with the failures named: `open-career package"
-                f" generate {family_ref} --findings-from {result.version_id}`")
+            for line in remedy_lines(gauntlet.run, family_ref, result.version_id):
+                say(line)
     return result
+
+
+# What a failed invariant actually needs from the human, by rule. Stage zero
+# never judges the drafted text, so regeneration cannot fix any of these: a
+# `--findings-from` re-run spends another six minutes to reach the identical
+# verdict under a new version id. The remedy names the real repair instead.
+def _invariant_remedies(rule: str, detail: str) -> tuple[str, ...]:
+    if rule == "work-authorization":
+        return (
+            "  the rendered text asserts a work-authorization status that your"
+            " profile does not support. Set the fields the projection is built"
+            " from, then regenerate:",
+            "    `open-career profile set authorized_in_country yes|no`",
+            "    `open-career profile set needs_sponsorship yes|no`",
+            "  (or remove the authorization sentence from the CV via"
+            " `open-career package review` -> edit)")
+    if rule == "date-coherence":
+        return (
+            "  the canonical experience dates do not cohere. Fix them at the"
+            " source (the CV walk re-asks each date; '2015-09', 'September"
+            " 2015' and 'present' are all understood):",
+            "    `open-career onboard`",
+            "  then regenerate; a redraft cannot change a canonical date.")
+    if rule == "user-constraints":
+        return (
+            "  the CV renders a string on your never-render list. Either drop"
+            " the entry from the list (`open-career policy set never_render"
+            " '[...]'`) or edit the text out:",
+            "    `open-career package review <version-id>` -> edit")
+    if rule in ("audit-integrity", "regrounding", "artifact-recheck"):
+        return (
+            "  the stored audit bundle itself does not verify, so no redraft of"
+            " the text can help. Generate a fresh version:",
+            "    `open-career package generate <family>`")
+    return (f"  no automated remedy is known for invariant '{rule}': {detail}",)
+
+
+def remedy_lines(run, family_ref: str, version_id: str) -> tuple[str, ...]:
+    """The repair guidance after a FAIL, specific to what actually failed.
+    `--findings-from` is offered ONLY for judge findings, which are about the
+    drafted text and are exactly what a regeneration can address."""
+    if run is None:
+        return ()
+    report = json.loads(run.report_json)
+    lines: list[str] = []
+    for r in report.get("invariants", []):
+        if r["disposition"] == FAIL_DISPOSITION:
+            lines.append(f"failed invariant {r['rule']}: {r['detail']}")
+            lines.extend(_invariant_remedies(r["rule"], r["detail"]))
+    if any(f["severity"] == "blocking" for judge in report.get("judges", [])
+           for f in judge["findings"]):
+        lines.append(
+            "the judges named blocking findings in the drafted text;"
+            " regenerate with those failures fed back:")
+        lines.append(f"  `open-career package generate {family_ref}"
+                     f" --findings-from {version_id}`")
+    if not lines:
+        lines.append(f"the run failed ({report.get('stop_reason', 'no reason recorded')});"
+                     f" inspect it with `open-career package show {version_id}`")
+    return tuple(lines)
 
 
 def _blocking_findings(repo: SqlitePackageRepository, version_id: str) -> tuple[str, ...]:
@@ -193,7 +258,8 @@ def _blocking_findings(repo: SqlitePackageRepository, version_id: str) -> tuple[
 # -- gauntlet ---------------------------------------------------------------
 
 def _gauntlet_runner(conn: sqlite3.Connection, storage: StorageAdapter,
-                     judge_models: dict[str, ModelAdapter]) -> GauntletRunner:
+                     judge_models: dict[str, ModelAdapter],
+                     say: Say | None = None) -> GauntletRunner:
     from adapters.render.pdftext import PopplerPdfTextExtractor
     from prompts import load_prompt as _load
 
@@ -208,7 +274,8 @@ def _gauntlet_runner(conn: sqlite3.Connection, storage: StorageAdapter,
     return GauntletRunner(
         repo, storage, PopplerPdfTextExtractor(),
         judge_models, {j: _load(PROMPT_FILES[j]) for j in JUDGES},
-        heartbeat_repo_factory=factory)
+        heartbeat_repo_factory=factory,
+        progress=(lambda line: say(f"  {line}...")) if say else None)
 
 
 def _run_gauntlet_attempt(conn: sqlite3.Connection, storage: StorageAdapter,
@@ -216,7 +283,7 @@ def _run_gauntlet_attempt(conn: sqlite3.Connection, storage: StorageAdapter,
                           version: PackageVersion, say: Say) -> GauntletRunResult:
     profile = SqliteUserProfileRepository(conn).get_fields()
     policies = SqliteUserPolicyRepository(conn).get_policies()
-    result = _gauntlet_runner(conn, storage, judge_models).run(
+    result = _gauntlet_runner(conn, storage, judge_models, say).run(
         version, profile, policies)
     if result.run is None:
         say(f"gauntlet: {result.detail}")
@@ -261,8 +328,13 @@ def run_gauntlet(conn: sqlite3.Connection, storage: StorageAdapter,
     if as_json:
         say(json.dumps({"run": result.run.id,
                         "report": json.loads(result.run.report_json)}, indent=2))
-    else:
-        _print_gauntlet_report(result.run, say)
+        return
+    _print_gauntlet_report(result.run, say)
+    if result.verdict == "FAIL":
+        package = repo.get_package(version.package_id)
+        family_ref = package.role_family_id if package else "<family>"
+        for line in remedy_lines(result.run, family_ref, version.id):
+            say(line)
 
 
 def _require_renderable_experience(context: GenerationContext) -> None:
@@ -325,6 +397,7 @@ def run_show(conn: sqlite3.Connection, ref: str, as_json: bool, say: Say) -> Non
         return
 
     runs = repo.list_gauntlet_runs(version.id)  # newest first by seq
+    decisions = repo.list_approval_decisions(version.id)
     gauntlet_status = ("pending"
                        if version.status in (VERIFIED, APPROVED)
                        and repo.effective_gauntlet_run(version.id, SUITE_VERSION) is None
@@ -339,10 +412,20 @@ def run_show(conn: sqlite3.Connection, ref: str, as_json: bool, say: Say) -> Non
         "context_snapshot_locator": version.context_snapshot_locator,
         "artifact_locator": version.artifact_locator,
         "gauntlet": gauntlet_status,
+        # The full report, not only its verdict: a machine consumer must learn
+        # WHAT failed (invariant dispositions and details, judge outcomes,
+        # findings, limitation lines), exactly as the human view shows it.
         "gauntlet_runs": [{"id": r.id, "suite_version": r.suite_version,
                            "attempt": r.attempt, "complete": bool(r.complete),
-                           "verdict": r.verdict, "created_at": r.created_at}
+                           "verdict": r.verdict, "created_at": r.created_at,
+                           "report": json.loads(r.report_json)}
                           for r in runs],
+        # An override is never silent: the approval decision travels with the
+        # version in both modes, naming the run and verdict it overrode.
+        "approval_decisions": [
+            {"id": d[0], "gauntlet_run_id": d[2], "verdict_at_decision": d[3],
+             "override": bool(d[4]), "override_reason": d[5], "created_at": d[6]}
+            for d in decisions],
     }
     if as_json:
         say(json.dumps(payload, indent=2))
@@ -352,6 +435,16 @@ def run_show(conn: sqlite3.Connection, ref: str, as_json: bool, say: Say) -> Non
         say(f"  gauntlet: pending (no run under the current suite {SUITE_VERSION})")
     for run in runs:
         _print_gauntlet_report(run, say)
+    for decision in payload["approval_decisions"]:
+        if decision["override"]:
+            say(f"  approval {decision['id']}: APPROVED DESPITE the Gauntlet"
+                f" (run {decision['gauntlet_run_id']}, verdict"
+                f" {decision['verdict_at_decision']}) at {decision['created_at']}")
+            say(f"    override reason: {decision['override_reason']}")
+        else:
+            say(f"  approval {decision['id']}: approved on run"
+                f" {decision['gauntlet_run_id']} (verdict"
+                f" {decision['verdict_at_decision']}) at {decision['created_at']}")
     # Locators are storage-relative; print the real on-disk paths.
     if version.artifact_locator:
         say(f"  artifact: {instance_dir() / version.artifact_locator}")
