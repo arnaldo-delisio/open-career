@@ -6,6 +6,7 @@ never tracked (OC-26).
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -236,10 +237,14 @@ def cmd_discover(args: argparse.Namespace) -> None:
         elif args.discover_command == "duplicates":
             _run_cli("discover duplicates", lambda: discover_cli.run_duplicates(
                 conn, print, as_json=args.json))
+        elif args.discover_command == "recover":
+            _run_cli("discover recover",
+                     lambda: discover_cli.run_recover(conn, print))
         elif args.discover_command == "queue":
             if args.queue_command == "list":
                 _run_cli("discover queue list", lambda: discover_cli.run_queue_list(
-                    conn, print, as_json=args.json, state=args.state))
+                    conn, print, as_json=args.json, state=args.state,
+                    limit=args.limit))
             elif args.queue_command == "retry":
                 _run_cli("discover queue retry", lambda: discover_cli.run_queue_retry(
                     conn, args.id, print))
@@ -465,6 +470,13 @@ def run_edges_add(conn, ask, say) -> None:
         f" -{edge_type}-> {target_type}:{target_id}")
 
 
+def _nonnegative_int(value: str) -> int:
+    number = int(value)
+    if number < 0:
+        raise argparse.ArgumentTypeError("must be a nonnegative integer")
+    return number
+
+
 def _cli_error(message: str) -> int:
     print(message, file=sys.stderr)
     return 1
@@ -669,7 +681,13 @@ def main(argv: list[str] | None = None) -> None:
     p_dq_list = queue_sub.add_parser("list", help="list queue rows")
     p_dq_list.add_argument("--json", action="store_true")
     p_dq_list.add_argument("--state", default=None)
+    p_dq_list.add_argument("--limit", type=_nonnegative_int, default=50,
+                           help="max rows shown (default 50); a total count"
+                                " line always prints")
     p_dq_list.set_defaults(func=cmd_discover)
+    discover_sub.add_parser(
+        "recover", help="clear an expired run lease (a live lease is refused,"
+                        " never stolen)").set_defaults(func=cmd_discover)
     p_dq_retry = queue_sub.add_parser(
         "retry", help="retry a terminal failed row after remediation")
     p_dq_retry.add_argument("id")
@@ -689,6 +707,16 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         args.func(args)
+    except BrokenPipeError:
+        # Standard pattern for `open-career ... | head`: the reader went
+        # away; exit quietly. Redirect stdout to devnull so the interpreter's
+        # shutdown flush cannot raise a second BrokenPipeError.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except (OSError, ValueError):  # replaced/captured stdout: swap it out
+            sys.stdout = open(os.devnull, "w")
+        raise SystemExit(0)
     except KeyboardInterrupt:
         # Only the persist-as-you-go interview commands can honestly promise
         # saved progress; every other command keeps its previous interrupt

@@ -23,8 +23,10 @@ adapters/
   storage/      SQLite repositories, migration runner, local-filesystem StorageAdapter
   models/       ModelAdapter implementations (headless Claude Code)
   render/       Playwright Chromium PDF renderer, pdftotext extraction
-  sources/ browser/   planned
-workers/        discovery and agent workers (planned)
+  sources/      the five public job-board API adapters (host whitelist, raw
+                capture, politeness policy); browser/ planned
+workers/        discovery run orchestrator (workers/discovery), interview session
+                workers
 migrations/     numbered SQL migrations, applied in order
 templates/      CV templates (single-column ATS-safe HTML; zero personal data)
 scripts/        manual checks (live model smoke), never part of the test suite
@@ -97,6 +99,65 @@ section-equivalence check. `package review <version>` accepts (approves) or edit
 write-back loop: an ungrounded edit either mints the underlying fact and regenerates, or
 is dropped. `package show <id>`, `package export <id> --out cv.pdf` (defaults to the
 approved version, hash-validated), `package recover` (claims expired generation leases).
+
+## Discovery
+
+Autonomous opportunity discovery (spec: the scope's `decisions/discovery-design.md`,
+OC-37): a per-tenant source registry over five public, unauthenticated job-board APIs
+(Greenhouse, Lever, Ashby, Workable, SmartRecruiters), polled under one budgeted run at a
+time. Every poll snapshots raw responses before parsing, versions each posting on
+material change, infers closure only from two consecutive complete polls (a vanished
+posting is the only closure signal these APIs give), runs a deterministic policy-fed
+eligibility gate with every reason and skip stored, and promotes at most a capped top
+slice through two model stages (requirement extraction as verbatim posting excerpts, one
+judged fit whose reason is rendered in code from those excerpts). The proposed action
+defaults to IGNORE/MONITOR; nothing in discovery applies, submits, or builds a package.
+
+**Boundary, stated plainly:** adapters call only the five whitelisted API hosts (OC-1, a
+tested constant; a URL or redirect target outside it is a refused fetch), never LinkedIn,
+never HTML scraping, never an authenticated endpoint. Coverage follows from that (OC-14):
+public-ATS discovery reaches tech/startup hiring and structurally misses Workday, iCIMS,
+Taleo, SuccessFactors, and companies posting only to job boards or their own sites; the
+curated EU layer narrows, not closes, that gap. Workable and SmartRecruiters are
+discovery-only (`apply_support: none`); the extension fills only Greenhouse/Lever/Ashby.
+Staleness signals (days posted, reposts, description changes, salary absence) are
+disclosed observations, never a score or a "ghost job" verdict (OC-13).
+
+Quickstart:
+
+```
+open-career discover sources add greenhouse <tenant-slug> --company "Acme"
+open-career discover sources enable <source-id>   # probes; enables only on success
+uv run python scripts/load_curated_sources.py curated.yaml --dry-run   # curated layer
+uv run python scripts/harvest_sources.py --index CC-MAIN-2026-26 --dry-run  # CC harvest
+open-career discover run          # one budgeted run (see the budget note below)
+open-career discover opportunities [--status open] [--gate pass|fail|none|stale]
+open-career discover show <opportunity-id>
+open-career discover duplicates   # report-only cross-source view, never merged
+open-career discover queue list [--state failed] [--limit N]
+open-career discover recover      # clears an expired run lease; a live one is refused
+```
+
+**A bare `discover run` spends real subscription model calls.** The locked budget prints
+as the run's first line, before anything is spent; the defaults allow up to 30 extraction
+calls and 10 judged fits (40 total model calls) per run. Cap them (or anything else) in
+`instance/discovery.json`; keys and locked defaults:
+
+| key | default | key | default |
+|---|---|---|---|
+| `per_host_min_interval_s` | 2 | `max_new_opportunities_gated` | 500 |
+| `max_fetches` | 2000 | `max_extraction_calls` | 30 |
+| `max_probes` | 2000 | `judged_fit_k` | 10 |
+| `rot_threshold` | 5 | `max_total_model_calls` | 40 |
+| `mass_closure_guard_percent` | 50 | `max_pages_per_poll` | 200 |
+| `mass_closure_guard_min` | 10 | `default_page_cost` | 2 |
+| `poll_interval_days` | 1 | `probe_backoff_base_days` | 1 |
+| `probe_backoff_cap_days` | 30 | `disabled_reprobe_days` | 30 |
+
+Set the model stages to zero (`{"max_extraction_calls": 0, "judged_fit_k": 0,
+"max_total_model_calls": 0}`) for a fetch-and-gate-only run that costs no model calls.
+Reviewed company metadata (`discover sources set-meta <id> industry <value>`) feeds the
+gate's hard exclusions; no classifier ever fills those fields silently.
 
 Other commands: `open-career migrate`, `open-career show` (human-readable dump of the
 stored career state; `open-career profile show` for the profile alone),

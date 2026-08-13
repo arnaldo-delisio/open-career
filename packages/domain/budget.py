@@ -32,7 +32,9 @@ class Budget:
 # The stages spend is tracked under, in funnel order.
 STAGES: tuple[str, ...] = ("fetch", "probe", "gate", "extraction", "judgment")
 
-_STAGE_LIMITS: dict[str, str] = {
+# Public: stage name -> the Budget field naming its cap (CLI wording and
+# spend displays consume this).
+STAGE_LIMITS: dict[str, str] = {
     "fetch": "max_fetches",
     "probe": "max_probes",
     "gate": "max_new_opportunities_gated",
@@ -77,7 +79,7 @@ class BudgetLedger:
         and answer False. Never raises on exhaustion."""
         if stage not in self._spend:
             raise ValueError(f"unknown budget stage '{stage}'")
-        limit = getattr(self._budget, _STAGE_LIMITS[stage])
+        limit = getattr(self._budget, STAGE_LIMITS[stage])
         if self._spend[stage] >= limit:
             self._note_exhaustion(stage, self._spend[stage], limit)
             return False
@@ -95,7 +97,7 @@ class BudgetLedger:
         estimated cost (e.g. a poll deferred for fetch budget)."""
         if stage not in self._spend:
             raise ValueError(f"unknown budget stage '{stage}'")
-        limit = getattr(self._budget, _STAGE_LIMITS[stage])
+        limit = getattr(self._budget, STAGE_LIMITS[stage])
         self._note_exhaustion(stage, self._spend[stage], limit)
 
     def _note_exhaustion(self, stage: str, spent: int, limit: int) -> None:

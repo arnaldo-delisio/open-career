@@ -287,6 +287,25 @@ class SqliteDiscoveryLease:
             (owner_token, fence)).fetchone()
         return row is not None
 
+    def holder(self) -> tuple[str | None, str | None]:
+        """(owner_token, expires_at) of the current lease row, for operator
+        surfaces (a blocked run names who holds it and until when)."""
+        row = self._conn.execute(
+            "SELECT owner_token, expires_at FROM discovery_lease WHERE id = 1"
+        ).fetchone()
+        return (row[0], row[1]) if row else (None, None)
+
+    def claim_expired(self) -> bool:
+        """Recovery (the package pipeline's precedent): clear the lease only
+        if it has expired; a live lease is never stolen from under its owner.
+        Returns True when a stale lease was cleared."""
+        with self._conn:
+            cursor = self._conn.execute(
+                "UPDATE discovery_lease SET owner_token = NULL, expires_at = NULL"
+                " WHERE id = 1 AND owner_token IS NOT NULL"
+                f" AND (expires_at IS NULL OR expires_at < {_NOW})")
+            return cursor.rowcount == 1
+
     def release(self, owner_token: str) -> None:
         with self._conn:
             self._conn.execute(

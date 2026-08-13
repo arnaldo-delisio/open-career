@@ -154,16 +154,52 @@ class DiscoveryConfig:
 def load_config(storage) -> DiscoveryConfig:
     """Config overrides from the instance's discovery.json (optional); unknown
     keys are refused so a typo never silently runs defaults."""
-    if not storage.exists(CONFIG_FILENAME):
+    # The read itself is the preflight: exists() answers False on a stat
+    # error (permission denial included), which would silently fall back to
+    # the default budgets and spend real model calls. Only a definite
+    # missing file returns defaults; every other read failure is an error.
+    try:
+        text = storage.read_text(CONFIG_FILENAME)
+    except FileNotFoundError:
         return DiscoveryConfig()
-    overrides = json.loads(storage.read_text(CONFIG_FILENAME))
+    except (UnicodeDecodeError, OSError) as e:
+        raise ValueError(
+            f"{CONFIG_FILENAME} (in the instance directory) could not be"
+            f" read: {e}") from e
+    try:
+        overrides = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{CONFIG_FILENAME} (in the instance directory) is not valid"
+            f" JSON: {e}") from e
     if not isinstance(overrides, dict):
-        raise ValueError("discovery.json must be a JSON object")
+        raise ValueError(f"{CONFIG_FILENAME} must be a JSON object")
     budget_fields = set(Budget.__dataclass_fields__)
     config_fields = set(DiscoveryConfig.__dataclass_fields__) - {"budget"}
     unknown = set(overrides) - budget_fields - config_fields
     if unknown:
-        raise ValueError(f"unknown discovery config keys: {sorted(unknown)}")
+        raise ValueError(
+            f"unknown {CONFIG_FILENAME} keys: {sorted(unknown)};"
+            f" allowed keys: {sorted(budget_fields | config_fields)}")
+    for key, value in overrides.items():
+        # Every field is a nonnegative integer (bool is not an integer here);
+        # a bad value is the same clean one-line config error as a bad key.
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(
+                f"{CONFIG_FILENAME} key '{key}' must be an integer,"
+                f" got {type(value).__name__}")
+        if value < 0:
+            raise ValueError(
+                f"{CONFIG_FILENAME} key '{key}' must be nonnegative, got {value}")
+        if key == "mass_closure_guard_percent" and not 0 <= value <= 100:
+            raise ValueError(
+                f"{CONFIG_FILENAME} key '{key}' must be between 0 and 100,"
+                f" got {value}")
+        if key in ("default_page_cost", "max_pages_per_poll") and value < 1:
+            # Admission estimates and per-poll hard limits below 1 would let
+            # a poll admit against a zero fetch budget (or forbid every poll).
+            raise ValueError(
+                f"{CONFIG_FILENAME} key '{key}' must be at least 1, got {value}")
     budget = Budget(**{k: v for k, v in overrides.items() if k in budget_fields})
     return DiscoveryConfig(budget=budget, **{
         k: v for k, v in overrides.items() if k in config_fields})

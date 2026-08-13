@@ -151,7 +151,9 @@ def test_run_then_opportunities_show_and_queue(instance, capsys, monkeypatch):
     assert [d["dimension"] for d in view["gate"]["dimensions"]]
 
     main(["discover", "queue", "list", "--json"])
-    rows = json.loads(capsys.readouterr().out)
+    view = json.loads(capsys.readouterr().out)
+    assert view["total"] == 1 and view["shown"] == 1
+    rows = view["rows"]
     assert rows[0]["state"] == "judged"
 
     with pytest.raises(SystemExit):
@@ -239,6 +241,241 @@ def test_duplicates_report_only_view(instance, capsys):
         assert not any("duplicate" in t for t in tables)
     finally:
         conn.close()
+
+
+def test_duplicates_handles_a_none_country_group(instance, capsys):
+    """Drive defect 3: a duplicate group whose location resolves to no country
+    sorts and renders (None-safe key), alongside a resolvable group."""
+    conn = connect(instance)
+    try:
+        from adapters.storage.sqlite_discovery import SqliteSourceRegistryRepository
+        from domain.discovery import Source
+        registry = SqliteSourceRegistryRepository(conn)
+        for source_id, ats in (("src_gh", "greenhouse"), ("src_lv", "lever")):
+            registry.add(Source(id=source_id, ats_type=ats, tenant_slug="acme",
+                                origin="manual", company_name="Acme"))
+        # No-country group (unresolvable location strings).
+        _seed_opportunity(conn, "src_gh", "1", "Backend Engineer", "The Moon")
+        _seed_opportunity(conn, "src_lv", "x1", "backend engineer", "Nowhere")
+        # Resolvable group.
+        _seed_opportunity(conn, "src_gh", "2", "Designer", "Rome, IT")
+        _seed_opportunity(conn, "src_lv", "x2", "designer", "Milan, Italy")
+    finally:
+        conn.close()
+    main(["discover", "duplicates", "--json"])
+    view = json.loads(capsys.readouterr().out)
+    assert len(view["groups"]) == 2
+    assert view["groups"][0]["country"] is None  # None sorts first, no crash
+    assert view["groups"][1]["country"] == "IT"
+    main(["discover", "duplicates"])
+    assert "no country" in capsys.readouterr().out
+
+
+def test_recover_clears_expired_lease_and_refuses_a_live_one(instance, capsys):
+    """Drive defect 2: recovery mirrors the package pipeline: an expired lease
+    clears; a live one is refused; a lease-blocked run names the holder and
+    exits non-zero."""
+    conn = connect(instance)
+    try:
+        from adapters.storage.sqlite_discovery import SqliteDiscoveryLease
+        assert SqliteDiscoveryLease(conn).acquire("stuck-run", 3600)
+    finally:
+        conn.close()
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["discover", "recover"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "live" in err and "stuck-run" in err and "never stolen" in err
+
+    with pytest.raises(SystemExit) as excinfo:  # blocked run: non-zero + holder
+        main(["discover", "run"])
+    assert excinfo.value.code == 1
+    err = capsys.readouterr().err
+    assert "stuck-run" in err and "expires" in err
+
+    conn = connect(instance)
+    try:
+        with conn:
+            conn.execute("UPDATE discovery_lease SET expires_at ="
+                         " '2000-01-01T00:00:00Z'")
+    finally:
+        conn.close()
+    main(["discover", "recover"])
+    out = capsys.readouterr().out
+    assert "cleared expired lease" in out and "stuck-run" in out
+    main(["discover", "recover"])
+    assert "nothing to recover" in capsys.readouterr().out
+
+
+def test_config_errors_are_clean_one_liners(instance, capsys):
+    """Drive defect 4: unknown discovery.json keys name the allowed keys;
+    malformed JSON reports the file and error without a traceback."""
+    (instance / "discovery.json").write_text('{"max_fetchez": 5}')
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    err = capsys.readouterr().err
+    assert "unknown discovery.json keys" in err and "max_fetchez" in err
+    assert "allowed keys" in err and "max_fetches" in err
+
+    (instance / "discovery.json").write_text("{not json")
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    err = capsys.readouterr().err
+    assert "discovery.json" in err and "not valid JSON" in err
+    assert "Traceback" not in err
+
+
+def test_config_values_are_validated_before_the_run(instance, capsys):
+    """Codex r16 finding 1: config values must be nonnegative integers (bool
+    excluded, percentage bounded); failures are the clean one-line error."""
+    (instance / "discovery.json").write_text('{"max_fetches": "0"}')
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    err = capsys.readouterr().err
+    assert "'max_fetches' must be an integer, got str" in err
+    assert "Traceback" not in err
+
+    (instance / "discovery.json").write_text('{"max_extraction_calls": -1}')
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    assert "'max_extraction_calls' must be nonnegative" in capsys.readouterr().err
+
+    (instance / "discovery.json").write_text(
+        '{"mass_closure_guard_percent": 150}')
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    assert "between 0 and 100" in capsys.readouterr().err
+
+    (instance / "discovery.json").write_text('{"max_fetches": true}')
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    assert "'max_fetches' must be an integer, got bool" in capsys.readouterr().err
+
+
+def test_undecodable_config_is_a_clean_one_line_error(instance, capsys):
+    """Codex r18 finding 1: invalid UTF-8 in discovery.json is the same clean
+    one-line config error, never a traceback."""
+    (instance / "discovery.json").write_bytes(b'\xff\xfe{"max_fetches": 1}')
+    with pytest.raises(SystemExit):
+        main(["discover", "run"])
+    err = capsys.readouterr().err
+    assert "discovery.json" in err and "could not be read" in err
+    assert "Traceback" not in err
+
+
+def test_lease_blocked_run_json_stdout_is_a_single_json_document(instance,
+                                                                 capsys):
+    """Codex r18 finding 2: a lease-blocked `discover run --json` writes one
+    valid JSON error document to stdout, no plain-text prelude."""
+    conn = connect(instance)
+    try:
+        from adapters.storage.sqlite_discovery import SqliteDiscoveryLease
+        assert SqliteDiscoveryLease(conn).acquire("stuck-run", 3600)
+    finally:
+        conn.close()
+    with pytest.raises(SystemExit) as excinfo:
+        main(["discover", "run", "--json"])
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    view = json.loads(captured.out)  # the whole stdout parses as JSON
+    assert view["error"] == "lease_held"
+    assert view["holder"] == "stuck-run"
+    assert view["expires_at"]
+    assert "lease" in captured.err  # the human message still goes to stderr
+
+
+def test_zero_total_model_calls_reads_as_nothing_attempted(instance, capsys,
+                                                           monkeypatch):
+    """Codex r16 finding 2: max_total_model_calls == 0 blocking a model stage
+    renders the nothing-attempted wording, never 'exhausted at extraction'."""
+    patch_run_dependencies(monkeypatch)
+    (instance / "discovery.json").write_text(
+        json.dumps({"max_total_model_calls": 0}))
+    main(["discover", "sources", "add", "greenhouse", "acme"])
+    capsys.readouterr()
+    main(["discover", "run"])
+    out = capsys.readouterr().out
+    assert "max_total_model_calls is 0; nothing attempted" in out
+    assert "exhausted at" not in out
+
+
+def test_queue_list_limit_rejects_negatives_and_accepts_zero(instance, capsys):
+    """Codex r16 finding 3: --limit is a nonnegative integer."""
+    with pytest.raises(SystemExit) as excinfo:
+        main(["discover", "queue", "list", "--limit", "-1"])
+    assert excinfo.value.code == 2  # argparse usage error
+    assert "nonnegative" in capsys.readouterr().err
+    main(["discover", "queue", "list", "--limit", "0"])
+    assert "promotion queue is empty" in capsys.readouterr().out
+
+
+def test_run_prints_the_locked_budget_before_spending(instance, capsys,
+                                                      monkeypatch):
+    """Drive defect 5: the locked budget (all caps) is the first output line,
+    before anything is spent."""
+    patch_run_dependencies(monkeypatch)
+    main(["discover", "sources", "add", "greenhouse", "acme"])
+    capsys.readouterr()
+    main(["discover", "run"])
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("locked budget: ")
+    budget = json.loads(lines[0].split("locked budget: ", 1)[1])
+    assert budget["max_total_model_calls"] == 40
+    assert budget["max_extraction_calls"] == 30
+
+
+def test_queue_list_limit_and_total_count(instance, capsys):
+    """Drive defect 7: --limit (default 50) plus a total count line."""
+    conn = connect(instance)
+    try:
+        from adapters.storage.sqlite_discovery import SqliteSourceRegistryRepository
+        from adapters.storage.sqlite_opportunities import (
+            SqlitePromotionQueueRepository,
+        )
+        from domain.discovery import Source
+        SqliteSourceRegistryRepository(conn).add(Source(
+            id="src_q", ats_type="greenhouse", tenant_slug="acme",
+            origin="manual"))
+        queue = SqlitePromotionQueueRepository(conn)
+        for i in range(3):
+            opp_id = _seed_opportunity(conn, "src_q", str(i), f"Role {i}",
+                                       "Rome, IT")
+            queue.enqueue(opp_id, f"ver_{opp_id}", 0,
+                          "2026-08-01T00:00:00Z", 0)
+    finally:
+        conn.close()
+    main(["discover", "queue", "list", "--limit", "2"])
+    out = capsys.readouterr().out
+    assert "3 row(s) total, showing 2" in out
+    main(["discover", "queue", "list", "--limit", "2", "--json"])
+    view = json.loads(capsys.readouterr().out)
+    assert view["total"] == 3 and view["shown"] == 2 and len(view["rows"]) == 2
+
+
+def test_zero_cap_exhaustion_wording(instance, capsys, monkeypatch):
+    """Drive defect 8: a zero stage cap reads as 'nothing attempted', never as
+    an exhausted budget."""
+    patch_run_dependencies(monkeypatch)
+    (instance / "discovery.json").write_text(
+        json.dumps({"max_new_opportunities_gated": 0}))
+    main(["discover", "sources", "add", "greenhouse", "acme"])
+    capsys.readouterr()
+    main(["discover", "run"])
+    out = capsys.readouterr().out
+    assert "gate stage cap is 0; nothing attempted" in out
+    assert "exhausted at" not in out
+
+
+def test_broken_pipe_exits_quietly(instance, capsys, monkeypatch):
+    """Drive defect 6: a closed reader (| head) exits 0 with no traceback."""
+    def raising_print(*_args, **_kwargs):
+        raise BrokenPipeError
+
+    monkeypatch.setattr("builtins.print", raising_print)
+    with pytest.raises(SystemExit) as excinfo:
+        main(["discover", "sources", "list"])
+    assert excinfo.value.code == 0
 
 
 def test_duplicates_empty_view(instance, capsys):

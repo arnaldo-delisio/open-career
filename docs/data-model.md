@@ -77,6 +77,36 @@ bundle fields are enforced at `adapters/storage/sqlite_packages.py`, never by co
 Snapshot and artifact objects live under `instance/packages/<pkg>/v<N>/g<lease-gen>/`,
 written once, never overwritten.
 
+## Fact origin evidence (migration 0005)
+
+Adds `career_facts.origin_evidence_id` (nullable FK to `evidence`): a cv-sourced draft
+fact records which evidence row's extraction minted it, so a resumed onboarding walks
+only the drafts belonging to the matched CV (OC-36 resume scoping).
+
+## Discovery tables (migration 0006)
+
+Spec: the scope's `decisions/discovery-design.md` (OC-37). All discovery state separates
+machine-owned from human-owned fields structurally, never by convention.
+
+| table | holds | notable constraints |
+|---|---|---|
+| `sources` | the per-tenant registry: stable `id`, mutable `tenant_slug` locator, origin (harvest/curated/manual), scheduler state (`next_poll_at`, `next_probe_at`, attempt counts, `last_poll_outcome`), reviewed company metadata with per-field origin provenance | `(ats_type, tenant_slug)` UNIQUE; status CHECK candidate/enabled/disabled; metadata origin CHECK curated/cli_edit |
+| `source_supersessions` | reviewed ATS-migration/rename links between sources | origin CHECK ('migration') |
+| `snapshots` | immutable committed complete polls; `seq` is the per-source order closure streaks and cohorts reference; `raw_locator` points at the captured raw page manifest under `instance/discovery/raw/` | `(source_id, seq)` UNIQUE; no update path exists |
+| `opportunities` | one row per `(source_id, external_job_id)`, carrying the four separated state fields: observed availability (machine, from polling), latest gate verdict pointer (machine), proposed action with its version/epoch pin (machine), `human_action` (human, never overwritten by polling); plus the observed-ungated backlog state, absence streak, reopen count, requirement proposals, and judged fit (both version- and epoch-pinned JSON) | availability CHECK open/closed/reopened; `(source_id, external_job_id)` UNIQUE |
+| `opportunity_versions` | append-only material state per posting (title, seniority, description hash, location/remote/salary JSON with provenance, apply URL) with a deterministic fingerprint | `(opportunity_id, version)` UNIQUE |
+| `gate_verdicts` | every gate evaluation, appended never updated: verdict plus all nine dimension checks with reasons and skips, and the dependency epoch it ran under | verdict CHECK pass/fail |
+| `suspect_cohorts` / `suspect_cohort_members` | the mass-closure guard's cohorts, keyed to the triggering snapshot, resolved row-level against the next consecutive snapshot | member outcome CHECK pending/closed/reappeared |
+| `promotion_queue` | version-pinned model-stage work rows with durable states, frozen ordering keys, bounded retry, and the exclusive claim marker (`claimed_by`, `claimed_fence`) | `(opportunity_id, version_id, epoch)` UNIQUE (an epoch bump mints a fresh row); state CHECK over the six durable states |
+| `discovery_runs` | one row per budgeted run: the locked budget JSON recorded at start, spend and per-source outcomes at finish, exhaustion stage | run_seq UNIQUE |
+| `dependency_epoch` | the single integer bumped in-transaction by every audited write to policies, profile, strategy, or the eligible edge set; derived results record the epoch they ran under and go stale by read-time comparison | `CHECK (id = 1)` |
+| `discovery_lease` | the singleton run lease: owner token, expiry at the database clock, and a monotonic `fence` bumped per acquisition; every persistent transition re-verifies owner+fence inside its transaction | `CHECK (id = 1)` |
+
+Raw fetched bodies (every response, error documents included) persist write-once under
+`instance/discovery/raw/<source>/<attempt>/response-NNNN.json` before any parsing; a
+committed snapshot's manifest references the 2xx pages, and degraded poll and probe
+outcomes reference every captured body from the run record.
+
 ## Export/import
 
 `open-career export <file.json>` dumps `{"format": "open-career-export", "version": 1,

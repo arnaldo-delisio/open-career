@@ -1318,6 +1318,91 @@ def test_probe_bodies_are_captured_durably_for_every_outcome(
     assert storage.read_bytes(raw_pages[0]) == body  # byte-true evidence
 
 
+def test_zero_page_cost_is_rejected_and_zero_fetch_budget_never_fetches(instance):
+    """Codex r17: admission estimates below 1 are config errors (a zero
+    estimate would admit polls against a zero fetch budget); with a valid
+    config and max_fetches=0, no adapter fetch ever happens."""
+    conn, storage = instance
+    from workers.discovery.run import load_config
+
+    storage.write_text("discovery.json", '{"default_page_cost": 0}')
+    with pytest.raises(ValueError, match="'default_page_cost' must be at least 1"):
+        load_config(storage)
+    storage.write_text("discovery.json", '{"max_pages_per_poll": 0}')
+    with pytest.raises(ValueError, match="'max_pages_per_poll' must be at least 1"):
+        load_config(storage)
+    storage.write_text("discovery.json", "{}")
+
+    seed_source(conn)  # one due enabled source
+    transport, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_fetches=0))
+
+    class CountingTransport:
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, url, headers, timeout):
+            self.calls += 1
+            return 200, json.dumps(gh_board()).encode(), {}
+
+    counting = CountingTransport()
+    fetcher = HttpFetcher(transport=counting, sleep=lambda _s: None,
+                          clock=lambda: 0.0, min_interval_s=0)
+    adapters = {"greenhouse": GreenhouseAdapter(fetcher)}
+    run = run_once(conn, storage, adapters, config, model)
+    assert run.status == "budget_exhausted" and run.exhausted_stage == "fetch"
+    assert counting.calls == 0  # the adapter was never invoked
+    outcomes = json.loads(run.source_outcomes_json)["sources"]
+    assert all(o.get("poll") == "deferred" for o in outcomes.values())
+
+
+def test_unreadable_config_errors_instead_of_defaulting(instance):
+    """Codex r19: an unreadable discovery.json must never fall back to the
+    default budgets (which spend real model calls); only a definite missing
+    file returns defaults."""
+    conn, storage = instance
+    from workers.discovery.run import load_config
+
+    class DeniedConfigStorage:
+        """Storage whose config read is denied; exists() answers False, the
+        way Path.exists() does on a stat error."""
+
+        def __init__(self, inner):
+            self._inner = inner
+            self.model_calls = 0
+
+        def exists(self, path):
+            return False if path == "discovery.json" else self._inner.exists(path)
+
+        def read_text(self, path):
+            if path == "discovery.json":
+                raise PermissionError(13, "Permission denied")
+            return self._inner.read_text(path)
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    denied = DeniedConfigStorage(storage)
+    with pytest.raises(ValueError, match="could not be read"):
+        load_config(denied)
+
+    # Through the CLI: one-line error, nonzero exit, no model work.
+    class ExplodingModel(ModelAdapter):
+        def complete(self, prompt: str) -> str:  # pragma: no cover
+            raise AssertionError("no model call may happen")
+
+    seed_source(conn)
+    from apps.cli.discover import DiscoverCliError, run_run
+    lines: list[str] = []
+    with pytest.raises(DiscoverCliError, match="could not be read"):
+        run_run(conn, denied, ExplodingModel(), lines.append)
+    assert not any("locked budget" in line for line in lines)
+
+    # A genuinely missing file still returns defaults.
+    assert load_config(storage).budget.max_extraction_calls == 30
+
+
 def test_discovery_indexes_exist(instance):
     """Codex r1 finding 6: the query-path indexes ship in migration 0006."""
     conn, _ = instance

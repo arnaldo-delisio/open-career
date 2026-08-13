@@ -10,6 +10,7 @@ import json
 import sqlite3
 
 from adapters.storage.sqlite_discovery import (
+    SqliteDiscoveryLease,
     SqliteSourceRegistryRepository,
 )
 from adapters.storage.sqlite_opportunities import (
@@ -27,24 +28,77 @@ class DiscoverCliError(ValueError):
 # ------------------------------------------------------------------- run
 
 def run_run(conn, storage, model, say, as_json: bool = False) -> None:
-    """One budgeted discovery run (§4): exhaustion is a safe stop, exit 0."""
+    """One budgeted discovery run (§4): exhaustion is a safe stop, exit 0.
+    A lease-blocked run names the holder and exits non-zero."""
     from adapters.sources import build_adapters
     from adapters.sources.http import HttpFetcher
     from workers.discovery.run import load_config, run_discovery
-    config = load_config(storage)
+    try:
+        config = load_config(storage)
+    except ValueError as e:
+        raise DiscoverCliError(str(e))
+    if not as_json:
+        # The locked budget prints BEFORE anything is spent, so a bare run's
+        # real model-call spend (subscription calls) is visible upfront.
+        say(f"locked budget: {config.to_json()}")
     # The shared fetcher honors the locked config's per-host interval (§4).
     fetcher = HttpFetcher(min_interval_s=config.budget.per_host_min_interval_s)
     adapters = build_adapters(fetcher=fetcher,
                               max_pages_per_poll=config.max_pages_per_poll)
-    run = run_discovery(conn, storage, model, adapters, config=config, say=say)
+    # In JSON mode the worker's progress reporting is silenced so stdout
+    # stays a single valid JSON document, success or error.
+    run = run_discovery(conn, storage, model, adapters, config=config,
+                        say=say if not as_json else (lambda *_a, **_k: None))
     if run is None:
-        return
+        owner, expires_at = SqliteDiscoveryLease(conn).holder()
+        message = (
+            f"another discovery run holds the lease (holder {owner}, expires"
+            f" {expires_at}); if that run is dead, `discover recover` clears"
+            " an expired lease")
+        if as_json:
+            say(json.dumps({"error": "lease_held", "holder": owner,
+                            "expires_at": expires_at, "message": message},
+                           indent=2))
+        raise DiscoverCliError(message)
     if as_json:
         say(json.dumps(_run_view(run), indent=2))
         return
-    say(f"run {run.id} {run.status}"
-        + (f" (exhausted at {run.exhausted_stage})" if run.exhausted_stage else ""))
+    say(f"run {run.id} {run.status}{_exhaustion_note(run)}")
     say(f"spend: {run.spend_json}")
+
+
+def _exhaustion_note(run) -> str:
+    """Honest wording: a zero cap means nothing was attempted, not that a
+    budget was spent to exhaustion."""
+    if not run.exhausted_stage:
+        return ""
+    from domain.budget import STAGE_LIMITS
+    budget = json.loads(run.budget_json)
+    if budget.get(STAGE_LIMITS[run.exhausted_stage]) == 0:
+        return (f" ({run.exhausted_stage} stage cap is 0; nothing attempted"
+                " at that stage)")
+    if run.exhausted_stage in ("extraction", "judgment") \
+            and budget.get("max_total_model_calls") == 0:
+        return (f" (max_total_model_calls is 0; nothing attempted at the"
+                f" {run.exhausted_stage} stage)")
+    return f" (exhausted at {run.exhausted_stage})"
+
+
+def run_recover(conn, say) -> None:
+    """Clear an expired run lease (the package pipeline's recovery precedent:
+    only an expired lease is ever claimed; a live one is refused, never
+    stolen from under its owner)."""
+    lease = SqliteDiscoveryLease(conn)
+    owner, expires_at = lease.holder()
+    if owner is None:
+        say("no lease held; nothing to recover")
+        return
+    if lease.claim_expired():
+        say(f"cleared expired lease (was held by {owner}, expired {expires_at})")
+        return
+    raise DiscoverCliError(
+        f"lease is live (holder {owner}, expires {expires_at}); a live lease"
+        " is never stolen. Wait for expiry or for the run to finish")
 
 
 def _run_view(run) -> dict:
@@ -223,26 +277,34 @@ def run_sources_supersessions(conn, say, as_json: bool = False) -> None:
 # ----------------------------------------------------------------- queue
 
 def run_queue_list(conn, say, as_json: bool = False,
-                   state: str | None = None) -> None:
+                   state: str | None = None, limit: int = 50) -> None:
     queue = SqlitePromotionQueueRepository(conn)
     rows = queue.list_rows(state)
+    total = len(rows)
+    shown = rows[:limit]
     if as_json:
-        say(json.dumps([{
-            "id": r.id, "opportunity_id": r.opportunity_id,
-            "version_id": r.version_id, "state": r.state,
-            "coverage_bp": r.coverage_bp, "attempts": r.attempts,
-            "failure_reason": r.failure_reason,
-            "superseded_reason": r.superseded_reason,
-        } for r in rows], indent=2))
+        say(json.dumps({
+            "total": total,
+            "shown": len(shown),
+            "rows": [{
+                "id": r.id, "opportunity_id": r.opportunity_id,
+                "version_id": r.version_id, "state": r.state,
+                "coverage_bp": r.coverage_bp, "attempts": r.attempts,
+                "failure_reason": r.failure_reason,
+                "superseded_reason": r.superseded_reason,
+            } for r in shown],
+        }, indent=2))
         return
     if not rows:
         say("promotion queue is empty")
         return
-    for r in rows:
+    for r in shown:
         say(f"{r.id}  {r.state}  opp={r.opportunity_id}"
             f"  attempts={r.attempts}"
             + (f"  coverage_bp={r.coverage_bp}" if r.coverage_bp is not None else "")
             + (f"  failure={r.failure_reason}" if r.failure_reason else ""))
+    say(f"{total} row(s) total, showing {len(shown)}"
+        + (f" (raise --limit past {limit} for more)" if total > limit else ""))
 
 
 def run_queue_retry(conn, row_id: str, say) -> None:
@@ -388,7 +450,9 @@ def run_duplicates(conn, say, as_json: bool = False) -> None:
         groups.setdefault((company, title, country), []).append(opportunity)
 
     duplicates = []
-    for (company, title, country), members in sorted(groups.items()):
+    # None-safe sort: a group without a resolvable country sorts first.
+    for (company, title, country), members in sorted(
+            groups.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][2] or "")):
         if len({o.source_id for o in members}) < 2:
             continue  # cross-source only; same-source dedup is deterministic
         duplicates.append({
