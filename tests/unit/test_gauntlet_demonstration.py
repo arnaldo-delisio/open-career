@@ -519,6 +519,40 @@ def test_a_consistency_finding_counts_when_it_cites_either_named_element(
     assert record["ok"] is True
 
 
+def test_a_contradiction_caught_by_another_judge_is_still_a_catch(corpus, tmp_path):
+    """The real demonstration had the Truth Judge catch the cross-section
+    contradiction on one leg while the case declares Consistency. The
+    breakage was blocked on the declared element, so the leg is a catch."""
+    cv = make_cv(bullet_text="Reduced onboarding time by 40%")
+    truth_catch = json.dumps({"verdict": "FAIL", "findings": [{
+        "element_id": "experiences[exp_1].bullet[0]", "severity": "blocking",
+        "quote": "Reduced onboarding time by 40%",
+        "message": "the profile contradicts this bullet",
+        "fact_ids": ["fact_1"]}]})
+    judges = _judges()
+    judges["truth"] = FakeJudgeModel([truth_catch] * 3)  # not the declared layer
+    case_md = ("# case\n- **Class**: cross-section-contradiction\n"
+               "- **Expected catching layer**: Consistency Judge: a finding"
+               " naming two elements\n")
+    case_dir = _write_case(corpus, "broken-other-judge", cv, case_md,
+                           bundles_for(corpus))
+    freeze_corpus(corpus)
+    record = run_case(case_dir, corpus, judges, tmp_path / "w",
+                      extractor=FixedExtractor(extracted_text(cv)))
+    assert record["verdict"] == "FAIL"
+    assert record["blocking_findings"]["consistency"] == []  # declared layer silent
+    assert record["ok"] is True
+    # An unrelated element accused by any judge is still NOT a catch.
+    other = json.dumps({"verdict": "FAIL", "findings": [{
+        "element_id": "summary", "severity": "blocking", "quote": "",
+        "message": "m"}]})
+    judges = _judges()
+    judges["truth"] = FakeJudgeModel([other] * 3)
+    miss = run_case(case_dir, corpus, judges, tmp_path / "w2",
+                    extractor=FixedExtractor(extracted_text(cv)))
+    assert miss["ok"] is False
+
+
 # -- identity: an unreported model pinned by its provider version ------------
 #
 # The Codex CLI reports no resolved model (its `codex exec --json` stream

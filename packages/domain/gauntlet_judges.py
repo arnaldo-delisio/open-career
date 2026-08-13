@@ -31,7 +31,7 @@ PROMPT_FILES = {"truth": "gauntlet_truth.md",
                 "writing": "gauntlet_writing.md"}
 
 # Bumping any prompt bumps its version here and the suite version with it.
-PROMPT_VERSIONS = {"truth": "2", "consistency": "1", "writing": "1"}
+PROMPT_VERSIONS = {"truth": "2", "consistency": "1", "writing": "2"}
 
 MAX_JUDGE_ATTEMPTS = 3  # initial call plus bounded retries with the failure named
 

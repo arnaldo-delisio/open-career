@@ -490,9 +490,11 @@ _CLASS_INVARIANT = {"wrong-work-authorization": "work-authorization"}
 
 
 def _catcher_hit(record: dict, case_dir: Path, corpus_dir: Path) -> bool:
-    """Did the case's DECLARED catching layer produce the expected valid
-    evidence (the case's named stage-zero rule failing, or a valid blocking
-    finding citing the broken element)? Unrelated failures do not count."""
+    """Did the suite produce the expected valid evidence for this case: the
+    case's named stage-zero rule failing, or a valid blocking finding citing
+    the broken element? An unrelated failure never counts, but a blocking
+    finding on a DECLARED element counts whichever judge made it (see
+    _accused_elements)."""
     if record["layer"] == "stage-zero":
         rule = _CLASS_INVARIANT.get(record.get("class"))
         if rule is None:
@@ -504,22 +506,34 @@ def _catcher_hit(record: dict, case_dir: Path, corpus_dir: Path) -> bool:
 
 
 def _accused_elements(record: dict) -> set[str]:
-    """Every element the declared catcher's blocking findings CITE. A
-    consistency finding names two elements and the contradiction is between
-    them, so citing either half cites the case's declared pair: the corpus
-    case.md for cross-section-contradiction names the summary AND the profile
-    location field, and which of them the judge puts first is not a property
-    the corpus fixes."""
-    layer = record.get("layer") or ""
+    """Every element that a valid blocking finding CITES, across all judges.
+
+    Two deliberate widenings, both about what the corpus actually declares:
+
+    A consistency finding names two elements and the contradiction is BETWEEN
+    them, so citing either half cites the declared pair; which one the judge
+    puts first is not a property the corpus fixes.
+
+    And a contradiction legitimately found by a DIFFERENT judge is still a
+    catch. The real demonstration had the Truth Judge catch
+    cross-section-contradiction on one leg ("The summary places Maya in
+    Rotterdam, but the profile states her location is Amsterdam") while the
+    case declares Consistency, and scoring that leg as a miss would claim the
+    breakage escaped when the suite in fact blocked it on the declared
+    element. The declared layer still governs which RULE must fire for a
+    stage-zero case, where the evidence is a named deterministic rule rather
+    than an accusation."""
     cited = set()
-    for finding in record.get("judge_findings", {}).get(layer, []):
-        if finding.get("severity") != "blocking":
-            continue
-        cited.add(finding.get("element_id"))
-        if finding.get("second_element_id"):
-            cited.add(finding["second_element_id"])
-    # Older records carry element ids only.
-    cited.update(record.get("blocking_findings", {}).get(layer, []))
+    for findings in (record.get("judge_findings") or {}).values():
+        for finding in findings:
+            if finding.get("severity") != "blocking":
+                continue
+            cited.add(finding.get("element_id"))
+            if finding.get("second_element_id"):
+                cited.add(finding["second_element_id"])
+    # Older records carry element ids only, per judge.
+    for elements in (record.get("blocking_findings") or {}).values():
+        cited.update(elements)
     return {c for c in cited if c}
 
 

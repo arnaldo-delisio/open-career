@@ -66,7 +66,14 @@ from domain.ports import PackageRepository, PdfTextExtractor, StorageAdapter
 # "recombining" facts, which is what a summary is for; v2 judges the summary
 # against the whole renderable view and says combination alone is never a
 # finding.
-SUITE_VERSION = "gauntlet-5"
+# gauntlet-6: Writing Judge prompt version 2. The v1 boundary was stated as
+# prose and applied inconsistently: the same bullet ("Explored a streaming
+# replacement") drew BLOCKING on one leg and ADVISORY on another, blocking a
+# legitimate CV about a third of the time. v2 states the boundary as an
+# explicit three-part conjunction (blocking only when concrete action AND
+# object AND outcome are all absent), names the missing-outcome trap, and
+# anchors both sides with worked examples.
+SUITE_VERSION = "gauntlet-6"
 
 RESERVATION_SECONDS = 60
 HEARTBEAT_INTERVAL_SECONDS = 10
