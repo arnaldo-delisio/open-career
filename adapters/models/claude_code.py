@@ -30,7 +30,14 @@ class ClaudeCodeAdapter(ModelAdapter):
     def complete_with_meta(self, prompt: str) -> tuple[str, dict]:
         """The envelope's provider-reported resolved model, observed per call,
         never asserted from config (the Gauntlet design's model-identity
-        rule); absent field reports honestly as unreported."""
+        rule); absent field reports honestly as unreported.
+
+        Observed fact, not an assumption: today's `claude -p --output-format
+        json` envelope carries no `model` or `modelName` key at all (its keys
+        are result, usage, modelUsage, session_id, cost and timing fields), so
+        this adapter reports 'unreported' in practice, exactly like the Codex
+        one. The lookup stays because the field is the provider's to add;
+        nothing is inferred from modelUsage, which was empty when observed."""
         envelope = self._complete_envelope(prompt)
         model = envelope.get("model") or envelope.get("modelName")
         return envelope["result"], {"model": model if isinstance(model, str) and model

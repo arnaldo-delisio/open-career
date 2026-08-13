@@ -61,7 +61,12 @@ from domain.ports import PackageRepository, PdfTextExtractor, StorageAdapter
 # unreadable label as `attention` rather than asserting a contradiction. A
 # rule change is a suite change, so the demonstration table is void until the
 # corpus is re-demonstrated under this suite.
-SUITE_VERSION = "gauntlet-4"
+# gauntlet-5: Truth Judge prompt version 2. The v1 prompt applied the
+# bullet rules to the summary, so it blocked every clean control for
+# "recombining" facts, which is what a summary is for; v2 judges the summary
+# against the whole renderable view and says combination alone is never a
+# finding.
+SUITE_VERSION = "gauntlet-5"
 
 RESERVATION_SECONDS = 60
 HEARTBEAT_INTERVAL_SECONDS = 10

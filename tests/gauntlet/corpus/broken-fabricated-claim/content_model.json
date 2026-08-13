@@ -106,9 +106,10 @@
       "bullets": [
         {
           "fact_ids": [
-            "f-openroute-maint"
+            "f-openroute-maint",
+            "f-openroute-adopt"
           ],
-          "text": "Built OpenRoute, the open-source route planning library adopted by Dutch logistics startups."
+          "text": "Maintains OpenRoute, the open-source route planning library, for the two Dutch logistics startups that adopted it, and reviews their community pull requests."
         },
         {
           "fact_ids": [

@@ -458,6 +458,23 @@ def run_case(case_dir: Path, corpus_dir: Path, judges, workdir: Path,
                 j["judge"]: [f["element_id"] for f in j["findings"]
                              if f["severity"] == "blocking"]
                 for j in report["judges"]},
+            # The findings VERBATIM, quote and message included. Element ids
+            # alone made a real defect (a judge blocking clean summaries)
+            # undiagnosable from the record: the text is the evidence.
+            "judge_findings": {
+                j["judge"]: [
+                    {"element_id": f["element_id"], "severity": f["severity"],
+                     "quote": f["quote"], "message": f["message"],
+                     **({"second_element_id": f["second_element_id"],
+                         "second_quote": f["second_quote"]}
+                        if f.get("second_element_id") else {}),
+                     **({"fact_ids": f["fact_ids"]} if f.get("fact_ids") else {})}
+                    for f in j["findings"]]
+                for j in report["judges"]},
+            "invalid_findings": {j["judge"]: j["invalid_findings"]
+                                 for j in report["judges"]},
+            "judge_notes": {j["judge"]: j["note"] for j in report["judges"]
+                            if j["note"]},
         }
         record["ok"] = _check_expectation(record, case_dir, corpus_dir)
         return record
@@ -483,8 +500,27 @@ def _catcher_hit(record: dict, case_dir: Path, corpus_dir: Path) -> bool:
             return False
         return rule in (record.get("failed_invariants") or [])
     expected_elements = broken_elements(case_dir, corpus_dir)
-    accused = set(record.get("blocking_findings", {}).get(record["layer"] or "", []))
-    return bool(accused & expected_elements)
+    return bool(_accused_elements(record) & expected_elements)
+
+
+def _accused_elements(record: dict) -> set[str]:
+    """Every element the declared catcher's blocking findings CITE. A
+    consistency finding names two elements and the contradiction is between
+    them, so citing either half cites the case's declared pair: the corpus
+    case.md for cross-section-contradiction names the summary AND the profile
+    location field, and which of them the judge puts first is not a property
+    the corpus fixes."""
+    layer = record.get("layer") or ""
+    cited = set()
+    for finding in record.get("judge_findings", {}).get(layer, []):
+        if finding.get("severity") != "blocking":
+            continue
+        cited.add(finding.get("element_id"))
+        if finding.get("second_element_id"):
+            cited.add(finding["second_element_id"])
+    # Older records carry element ids only.
+    cited.update(record.get("blocking_findings", {}).get(layer, []))
+    return {c for c in cited if c}
 
 
 def _check_expectation(record: dict, case_dir: Path, corpus_dir: Path) -> bool:
@@ -548,7 +584,10 @@ def _matches_expected_provider_versions(record: dict, expected_versions) -> list
 
 def limitation_lines(record: dict) -> list[str]:
     """The verbatim limitation text for the published table, for every judge
-    whose backend reported no model identity. The table must never read as
+    whose backend reported no model identity. Written PER JUDGE: no resolved
+    model identity is available from either CLI this build uses, and the
+    sentence must name the one behind the judge it is about, never assert the
+    Codex CLI behind a Claude-backed judge. The table must never read as
     though the model were known."""
     lines = []
     versions = record.get("provider_versions") or {}
@@ -557,14 +596,15 @@ def limitation_lines(record: dict) -> list[str]:
             continue
         version = versions.get(judge, "unavailable")
         lines.append(
-            f"Model identity limitation ({judge} judge): the backend reported"
-            " no resolved model identity, so the run records model:"
-            " unreported. For the Truth Judge this is the Codex CLI, whose"
-            " `codex exec --json` event stream carries no model field. The"
-            f" demonstrated claim for this judge is bounded by the observed"
-            f" provider version {version!r}, not by a model identity, and a"
-            " change in that provider version voids this table until"
-            " re-demonstrated.")
+            f"Model identity limitation ({judge} judge): its backend, provider"
+            f" version {version!r}, reports no resolved model identity, so the"
+            " run records model: unreported. Neither CLI this build uses"
+            " exposes one: the Codex CLI's `codex exec --json` event stream"
+            " carries no model field, and the Claude Code JSON envelope"
+            " carries modelUsage but no model or modelName key. The"
+            f" demonstrated claim for this judge is bounded by the provider"
+            f" version {version!r}, not by a model identity, and a change in"
+            " it voids this table until re-demonstrated.")
     return lines
 
 
@@ -713,33 +753,35 @@ def run_demonstration(corpus_dir: Path, judges, only_case: str | None = None,
 
 # -- discrimination protocol (automatable operations) -------------------------
 
-def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+# Directories a trial copy never needs, and must not carry: history, the
+# virtualenv, operator evidence, build output.
+_TREE_COPY_SKIP = ("__pycache__", ".git", ".venv", "instance", "node_modules",
+                   "dist", ".pytest_cache", ".ruff_cache")
 
 
-def cp_backup(target: Path, workdir: Path) -> tuple[Path, str]:
-    """cp backup with its hash recorded (never `git checkout` to restore)."""
-    backup = workdir / (target.name + ".bak")
-    shutil.copyfile(target, backup)
-    return backup, _sha(backup)
+def copy_tree_for_trial(destination: Path, repo: Path | None = None) -> Path:
+    """A throwaway COPY of the checkout for one trial leg. The trial mutates
+    only the copy, so the live checkout is never edited: an operator running
+    a demonstration while other sessions work in the tree used to see
+    mutation residue in packages/domain/, which corrupts those sessions and
+    makes trials fail spuriously. The copy also removes the whole
+    backup-and-restore burden: nothing needs restoring, because nothing real
+    was touched."""
+    source = repo or _REPO
+    shutil.copytree(source, destination,
+                    ignore=shutil.ignore_patterns(*_TREE_COPY_SKIP),
+                    symlinks=True)
+    return destination
 
 
 def apply_mutation(target: Path, old: str, new: str) -> str:
-    """A named rule-disabling mutation, recorded as the exact substitution."""
+    """A named rule-disabling mutation, recorded as the exact substitution.
+    Applied to a file inside a trial COPY, never in the live checkout."""
     source = target.read_text()
     if old not in source:
         raise ValueError(f"mutation target text not found in {target}")
     target.write_text(source.replace(old, new, 1))
     return f"--- replaced ---\n{old}\n--- with ---\n{new}"
-
-
-def restore_verified(backup: Path, backup_hash: str, target: Path) -> None:
-    """Byte-identical cp restore, hash-verified on both ends."""
-    if _sha(backup) != backup_hash:
-        raise ValueError("backup no longer matches its recorded hash; abort")
-    shutil.copyfile(backup, target)
-    if _sha(target) != backup_hash:
-        raise ValueError("restore is not byte-identical; abort")
 
 
 # Predeclared discrimination mutations, keyed by case class: which checker
@@ -797,9 +839,12 @@ MUTATION_REGISTRY: dict[str, dict] = {
 }
 
 
-def _registry_entry(case_dir: Path, registry: dict) -> tuple[dict, Path]:
+def _registry_entry(case_dir: Path, registry: dict,
+                    root: Path | None = None) -> tuple[dict, Path]:
     """The checked registry lookup: the case class must have a predeclared
-    entry, the target must exist, and the named mutation must apply."""
+    entry, the target must exist, and the named mutation must apply. A
+    relative target resolves against `root`, which is the trial COPY of the
+    tree, never the live checkout."""
     declared_class = parse_case_md(case_dir)["class"]
     entry = registry.get(declared_class)
     if entry is None:
@@ -808,7 +853,7 @@ def _registry_entry(case_dir: Path, registry: dict) -> tuple[dict, Path]:
             f" '{declared_class}'; arbitrary targets are rejected")
     target = Path(entry["target"])
     if not target.is_absolute():
-        target = _REPO / target
+        target = (root or _REPO) / target
     if not target.is_file():
         raise ValueError(f"registry target does not exist: {target}")
     if entry["old"] not in target.read_text():
@@ -819,13 +864,18 @@ def _registry_entry(case_dir: Path, registry: dict) -> tuple[dict, Path]:
 
 
 def _default_leg_spawner(case_dir: Path, corpus_dir: Path, workdir: Path,
-                         bundles_root: Path | None = None) -> dict:
-    """One trial leg in a FRESH subprocess, so imports reflect the on-disk
-    (mutated or restored) source, never this process's cached modules."""
+                         bundles_root: Path | None = None,
+                         root: Path | None = None) -> dict:
+    """One trial leg in a FRESH subprocess running the tree at `root` (a
+    throwaway copy for a trial), so imports reflect that tree's source and
+    never this process's cached modules. The corpus and the bundles are read
+    from their real absolute paths: only CODE is copied."""
     workdir.mkdir(parents=True, exist_ok=True)
     out = workdir / "leg.json"
+    script = (root / "scripts" / "gauntlet_demonstration.py") if root \
+        else Path(__file__).resolve()
     proc = subprocess.run(
-        [sys.executable, str(Path(__file__).resolve()), "_leg",
+        [sys.executable, str(script), "_leg",
          "--case-dir", str(case_dir), "--corpus", str(corpus_dir),
          "--out", str(out)]
         + (["--bundles", str(bundles_root)] if bundles_root else []),
@@ -859,48 +909,61 @@ def run_discrimination_trial(case_dir: Path, corpus_dir: Path,
                              bundles_root: Path | None = None) -> dict:
     """The predeclared protocol for one case, driven ONLY by the checked
     mutation registry (case class -> checker target + named rule-disabling
-    mutation): backup, disable the rule (recording the diff), case must
-    ESCAPE (the mutated run completes normally and the declared catcher no
-    longer emits its valid blocking evidence), byte-identical restore
-    verified by hash, case must be CAUGHT. Each leg runs in a fresh
-    subprocess so imports reflect the on-disk source. A crashed or
-    abstaining leg records an INVALID trial, never an escape."""
-    entry, target = _registry_entry(case_dir, registry or MUTATION_REGISTRY)
-    spawn = leg_spawner or (
-        lambda case, corpus, work: _default_leg_spawner(
-            case, corpus, work, bundles_root=bundles_root))
+    mutation).
+
+    Each leg runs against its own THROWAWAY COPY of the checkout, one mutated
+    and one pristine: the case must ESCAPE under the mutation (the leg
+    completes normally and the declared catcher no longer emits its valid
+    blocking evidence) and be CAUGHT without it. The live checkout is never
+    edited, so a concurrent session can never see mutation residue and there
+    is no restore step left to get wrong. Each leg runs in a fresh subprocess
+    against its copy. A crashed or abstaining leg records an INVALID trial,
+    never an escape.
+
+    A registry whose target is an ABSOLUTE path is a harness self-test
+    fixture outside the tree: it is mutated in place and reverted, since
+    there is no checkout to protect."""
+    registry = registry or MUTATION_REGISTRY
+    entry, _ = _registry_entry(case_dir, registry)
+    in_tree = not Path(entry["target"]).is_absolute()
     workdir = Path(tempfile.mkdtemp(prefix="gauntlet-trial-"))
-    try:
-        backup, backup_hash = cp_backup(target, workdir)
-        diff = apply_mutation(target, entry["old"], entry["new"])
+
+    def leg(name: str, mutate: bool) -> tuple[dict, str]:
+        root = copy_tree_for_trial(workdir / f"tree-{name}") if in_tree else None
+        _e, target = _registry_entry(case_dir, registry, root=root)
+        diff = apply_mutation(target, entry["old"], entry["new"]) if mutate else ""
         try:
-            try:
-                mutated = spawn(case_dir, corpus_dir, workdir / "mutated")
-            except Exception as e:  # a crash is an invalid trial, not an escape
-                mutated = {"case": case_dir.name, "status": "error",
-                           "layer": parse_case_md(case_dir)["layer"],
-                           "detail": f"{type(e).__name__}: {e}"}
+            if leg_spawner is not None:
+                return leg_spawner(case_dir, corpus_dir, workdir / name, root), diff
+            return _default_leg_spawner(case_dir, corpus_dir, workdir / name,
+                                        bundles_root=bundles_root, root=root), diff
         finally:
-            restore_verified(backup, backup_hash, target)
+            if mutate and not in_tree:  # an out-of-tree fixture, put it back
+                apply_mutation(target, entry["new"], entry["old"])
+
+    def run_leg(name: str, mutate: bool) -> tuple[dict, str]:
         try:
-            restored = spawn(case_dir, corpus_dir, workdir / "restored")
-        except Exception as e:
-            restored = {"case": case_dir.name, "status": "error",
-                        "layer": parse_case_md(case_dir)["layer"],
-                        "detail": f"{type(e).__name__}: {e}"}
+            return leg(name, mutate)
+        except Exception as e:  # a crash is an invalid trial, not an escape
+            return {"case": case_dir.name, "status": "error",
+                    "layer": parse_case_md(case_dir)["layer"],
+                    "detail": f"{type(e).__name__}: {e}"}, ""
+
+    try:
+        mutated, diff = run_leg("mutated", True)
+        restored, _ = run_leg("restored", False)
         mutated_valid, mutated_reason = _trial_run_validity(mutated)
         restored_valid, restored_reason = _trial_run_validity(restored)
         valid = mutated_valid and restored_valid
         invalid_reason = "; ".join(r for r in (mutated_reason, restored_reason) if r)
         escaped = (mutated_valid
                    and not _catcher_hit(mutated, case_dir, corpus_dir))
-        caught = (restored_valid
-                  and bool(restored.get("ok", False)))
+        caught = restored_valid and bool(restored.get("ok", False))
         return {
-            "case": case_dir.name, "target": str(target),
-            "mutation_name": entry["name"],
-            "mutation_diff": diff, "backup_hash": backup_hash,
-            "restore_verified": True,
+            "case": case_dir.name, "target": entry["target"],
+            "mutation_name": entry["name"], "mutation_diff": diff,
+            "ran_against": ("throwaway tree copies; the live checkout is never"
+                            " mutated" if in_tree else "an out-of-tree fixture"),
             "mutated_run": mutated, "restored_run": restored,
             "valid_trial": valid, "invalid_reason": invalid_reason,
             "escaped_under_mutation": escaped,

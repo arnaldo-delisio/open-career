@@ -46,10 +46,9 @@
         },
         {
           "fact_ids": [
-            "f-explore",
             "f-platform"
           ],
-          "text": "Worked on systems and pipelines, supporting the team and the clients."
+          "text": "Worked with the team, supporting engineers on the platform."
         }
       ],
       "end_date": "2024-06",
@@ -146,5 +145,5 @@
       "name": "API design"
     }
   ],
-  "summary": "Engineer supporting teams, systems, and clients across the Netherlands."
+  "summary": "Engineer working with teams and supporting engineers in the Netherlands."
 }

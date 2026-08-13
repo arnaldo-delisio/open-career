@@ -18,9 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from gauntlet_demonstration import (  # noqa: E402
     apply_mutation,
     broken_elements,
-    cp_backup,
+    copy_tree_for_trial,
     parse_case_md,
-    restore_verified,
 )
 from gauntlet_demonstration import run_case as _run_case  # noqa: E402
 from gauntlet_demonstration import run_demonstration as _run_demonstration  # noqa: E402
@@ -255,7 +254,7 @@ def test_crashed_mutated_leg_is_an_invalid_trial_never_an_escape(corpus, tmp_pat
     legs = iter([RuntimeError("leg subprocess crashed"),
                  _leg_record()])  # restored leg catches
 
-    def spawner(case_dir, corpus_dir, workdir):
+    def spawner(case_dir, corpus_dir, workdir, root):
         leg = next(legs)
         if isinstance(leg, Exception):
             raise leg
@@ -267,7 +266,7 @@ def test_crashed_mutated_leg_is_an_invalid_trial_never_an_escape(corpus, tmp_pat
     assert "crashed" in trial["invalid_reason"]
     assert trial["escaped_under_mutation"] is False
     assert trial["discriminates"] is False
-    # The target was still restored byte-identically.
+    # The out-of-tree fixture was put back.
     assert target.read_text() == "RULE_ENABLED = True\n"
 
 
@@ -303,7 +302,7 @@ def test_valid_trial_escape_and_catch_with_mutation_applied_per_leg(corpus, tmp_
     target, registry = _test_registry(tmp_path)
     seen = []
 
-    def spawner(case_dir, corpus_dir, workdir):
+    def spawner(case_dir, corpus_dir, workdir, root):
         seen.append(target.read_text())
         if len(seen) == 1:  # mutated leg: catcher silent
             return _leg_record(verdict="PASS", accused=(), ok=False)
@@ -471,6 +470,55 @@ def test_a_stage_zero_case_failing_on_an_unrelated_rule_is_not_certified(
     assert record["ok"] is False  # a FAIL from another rule is not a catch
 
 
+def test_the_record_persists_finding_text_not_only_element_ids(corpus, tmp_path):
+    """Element ids alone made a real defect (a judge blocking clean summaries)
+    undiagnosable from demonstration.json: the quote and message are the
+    evidence."""
+    cv = make_cv(bullet_text="Reduced onboarding time by 40%")
+    catch = json.dumps({"verdict": "FAIL", "findings": [{
+        "element_id": "experiences[exp_1].bullet[0]", "severity": "blocking",
+        "quote": "Reduced onboarding time by 40%",
+        "message": "the fact states no 40 percent figure",
+        "fact_ids": ["fact_1"]}]})
+    record = run_case(corpus / "broken-x", corpus, _judges(catch),
+                      tmp_path / "w", extractor=FixedExtractor(extracted_text(cv)))
+    (finding,) = record["judge_findings"]["truth"]
+    assert finding["quote"] == "Reduced onboarding time by 40%"
+    assert finding["message"] == "the fact states no 40 percent figure"
+    assert finding["fact_ids"] == ["fact_1"]
+    assert record["judge_findings"]["writing"] == []
+
+
+def test_a_consistency_finding_counts_when_it_cites_either_named_element(
+        corpus, tmp_path):
+    """A contradiction is between TWO elements and the case declares both;
+    which one the judge puts first is not a property the corpus fixes. The
+    real run scored 2 of 3 on cross-section-contradiction purely because one
+    leg named the other half of the declared pair first."""
+    cv = make_cv(bullet_text="Reduced onboarding time by 40%")
+    # The judge names the entry FIRST and the broken bullet second.
+    reversed_pair = json.dumps({"verdict": "FAIL", "findings": [{
+        "element_id": "experiences[exp_1]", "severity": "blocking",
+        "quote": "Acme", "message": "contradicts the bullet beneath it",
+        "second_element_id": "experiences[exp_1].bullet[0]",
+        "second_quote": "Reduced onboarding time by 40%"}]})
+    judges = _judges()
+    judges["consistency"] = FakeJudgeModel([reversed_pair] * 3)
+    case_md = ("# case\n- **Class**: cross-section-contradiction\n"
+               "- **Expected catching layer**: Consistency Judge: a finding"
+               " naming two elements\n")
+    case_dir = _write_case(corpus, "broken-pair", cv, case_md,
+                           bundles_for(corpus))
+    freeze_corpus(corpus)
+    record = run_case(case_dir, corpus, judges, tmp_path / "w",
+                      extractor=FixedExtractor(extracted_text(cv)))
+    assert record["verdict"] == "FAIL"
+    # Only the second cited element is the diff-derived broken one.
+    assert record["blocking_findings"]["consistency"] == ["experiences[exp_1]"]
+    assert broken_elements(case_dir, corpus) == {"experiences[exp_1].bullet[0]"}
+    assert record["ok"] is True
+
+
 # -- identity: an unreported model pinned by its provider version ------------
 #
 # The Codex CLI reports no resolved model (its `codex exec --json` stream
@@ -560,6 +608,9 @@ def test_any_unreported_identity_carries_a_verbatim_limitation_line(corpus):
     assert "Model identity limitation (truth judge)" in line
     assert "no resolved model identity" in line
     assert "codex exec --json" in line and "no model field" in line
+    # Accurate for BOTH CLIs: neither exposes a resolved model, so the text
+    # never claims the Codex CLI sits behind a Claude-backed judge.
+    assert "modelUsage but no model or modelName key" in line
     assert CODEX_VERSION in line
     # It travels per case too, for the published table.
     assert all(case["limitations"] == [line] for case in record["cases"]
@@ -572,6 +623,34 @@ def test_any_unreported_identity_carries_a_verbatim_limitation_line(corpus):
     clean = run_demonstration(corpus, judges, expected_models=_expected(),
                               extractor=corpus_extractor(corpus))
     assert clean["limitations"] == [] and clean["demonstrating"] is True
+
+
+def test_the_limitation_line_names_the_right_backend_per_judge(corpus):
+    """Every judge here reports no identity (both CLIs behave this way), each
+    with its own provider version: no line may assert another judge's
+    backend or another judge's version."""
+    judges = {j: SilentModelJudge([_output()] * 6,
+                                  provider_version=f"cli-{j} 1.0")
+              for j in JUDGES}
+    judges["truth"] = SilentModelJudge([TRUTH_CATCH] * 3 + [_output()] * 3,
+                                       provider_version=CODEX_VERSION)
+    record = run_demonstration(
+        corpus, judges,
+        expected_models={j: "unreported" for j in JUDGES},
+        expected_provider_versions={"truth": CODEX_VERSION,
+                                    "consistency": "cli-consistency 1.0",
+                                    "writing": "cli-writing 1.0"},
+        extractor=corpus_extractor(corpus))
+    assert record["demonstrating"] is True
+    by_judge = {j: [line for line in record["limitations"]
+                    if f"({j} judge)" in line] for j in JUDGES}
+    assert all(len(lines) == 1 for lines in by_judge.values())
+    assert CODEX_VERSION in by_judge["truth"][0]
+    for judge in ("consistency", "writing"):
+        line = by_judge[judge][0]
+        assert f"cli-{judge} 1.0" in line
+        assert CODEX_VERSION not in line
+        assert "For the Truth Judge" not in line
 
 
 # -- frozen-corpus integrity --------------------------------------------------
@@ -915,10 +994,10 @@ def _fake_leg_spawner(helper: Path, responses_path: Path):
     layer faked."""
     import subprocess
 
-    def spawn(case_dir, corpus_dir, workdir):
+    def spawn(case_dir, corpus_dir, workdir, root=None):
         workdir.mkdir(parents=True, exist_ok=True)
         out = workdir / "leg.json"
-        repo = Path(__file__).resolve().parents[2]
+        repo = root or Path(__file__).resolve().parents[2]
         proc = subprocess.run(
             [sys.executable, str(helper), str(repo), str(case_dir),
              str(corpus_dir), str(out), str(responses_path),
@@ -979,18 +1058,58 @@ def test_a_verdict_only_judge_mutation_does_not_discriminate(registry_corpus):
     assert trial["discriminates"] is False
 
 
-def test_discrimination_operations_backup_mutate_restore_hash_verified(tmp_path):
+def test_a_trial_never_mutates_the_live_checkout(corpus, tmp_path):
+    """The residue defect: trials used to edit real source files in the live
+    checkout and restore them afterwards, which corrupted concurrent sessions
+    and made trials fail spuriously. Each leg now runs against its own
+    throwaway copy, so the checkout is untouched at every moment, not merely
+    afterwards."""
+    import gauntlet_demonstration as gd
+
+    live = gd._REPO / "packages" / "domain" / "gauntlet_judges.py"
+    before = live.read_bytes()
+    seen_roots = []
+
+    def spawner(case_dir, corpus_dir, workdir, root):
+        seen_roots.append(root)
+        # DURING the leg, the live file is pristine and the copy carries the
+        # mutation.
+        assert live.read_bytes() == before
+        copied = root / "packages" / "domain" / "gauntlet_judges.py"
+        return {"case": case_dir.name, "status": "ran", "verdict": "FAIL",
+                "layer": "truth", "clean": False, "failed_invariants": [],
+                "blocking_findings": {"truth": ["experiences[exp_1].bullet[0]"]},
+                "mutated_copy": "findings, valid, invalid = [], (), ()"
+                                 in copied.read_text(),
+                "ok": True}
+
+    trial = run_discrimination_trial(corpus / "broken-x", corpus,
+                                     leg_spawner=spawner)
+    assert live.read_bytes() == before
+    assert trial["mutated_run"]["mutated_copy"] is True
+    assert trial["restored_run"]["mutated_copy"] is False
+    assert "never" in trial["ran_against"]
+    # Two distinct throwaway trees, both gone afterwards.
+    assert len(set(map(str, seen_roots))) == 2
+    assert not any(root.exists() for root in seen_roots)
+
+
+def test_a_tree_copy_carries_the_code_and_not_the_baggage(tmp_path):
+    import gauntlet_demonstration as gd
+
+    root = copy_tree_for_trial(tmp_path / "tree")
+    assert (root / "packages" / "domain" / "gauntlet_judges.py").is_file()
+    assert (root / "scripts" / "gauntlet_demonstration.py").is_file()
+    assert (root / "migrations").is_dir()
+    for skipped in (".git", ".venv", "instance"):
+        assert not (root / skipped).exists()
+    assert gd._REPO != root
+
+
+def test_a_mutation_that_does_not_apply_is_an_error_never_a_no_op(tmp_path):
     target = tmp_path / "checker.py"
     target.write_text("RULES = ['date-coherence']\n")
-    backup, backup_hash = cp_backup(target, tmp_path)
     diff = apply_mutation(target, "['date-coherence']", "[]")
     assert "date-coherence" in diff and target.read_text() == "RULES = []\n"
-    restore_verified(backup, backup_hash, target)
-    assert target.read_text() == "RULES = ['date-coherence']\n"
-    # A tampered backup refuses to restore (never a silent wrong restore).
-    backup.write_text("tampered")
-    with pytest.raises(ValueError, match="recorded hash"):
-        restore_verified(backup, backup_hash, target)
-    # A missing mutation target is an error, never a no-op trial.
     with pytest.raises(ValueError, match="not found"):
         apply_mutation(target, "no such text", "x")

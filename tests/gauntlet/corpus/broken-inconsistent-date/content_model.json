@@ -24,7 +24,7 @@
           "fact_ids": [
             "f-migration"
           ],
-          "text": "Led the 2018 migration of the order service from Python 2 to Python 3."
+          "text": "Led the migration of the order service from Python 2 to Python 3."
         },
         {
           "fact_ids": [
@@ -145,5 +145,5 @@
       "name": "API design"
     }
   ],
-  "summary": "Backend engineer in Amsterdam. Built and maintained order, checkout, and routing systems in Python on Kubernetes."
+  "summary": "Backend engineer in Amsterdam since 2015. Built and maintained order, checkout, and routing systems in Python on Kubernetes."
 }

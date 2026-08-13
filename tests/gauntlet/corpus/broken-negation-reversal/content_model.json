@@ -42,13 +42,13 @@
           "fact_ids": [
             "f-oncall"
           ],
-          "text": "Maintained the legacy billing systems and kept uptime at 99.9 percent."
+          "text": "Kept uptime at 99.9 percent without maintaining the legacy billing systems."
         },
         {
           "fact_ids": [
             "f-explore"
           ],
-          "text": "Delivered a streaming replacement for the nightly batch pipeline."
+          "text": "Explored a streaming replacement for the nightly batch pipeline."
         }
       ],
       "end_date": "2024-06",

@@ -28,10 +28,9 @@
         },
         {
           "fact_ids": [
-            "f-platform",
             "f-costs"
           ],
-          "text": "Operated the deployment pipeline for the platform team of five engineers, reducing monthly hosting costs by 30 percent."
+          "text": "Worked on the team that reduced monthly hosting costs by 30 percent by consolidating three Kubernetes clusters into one."
         },
         {
           "fact_ids": [
@@ -47,9 +46,9 @@
         },
         {
           "fact_ids": [
-            "f-explore"
+            "f-platform"
           ],
-          "text": "Explored a streaming replacement for the nightly batch pipeline."
+          "text": "Supported the deployment pipeline of the platform team as its one engineer."
         }
       ],
       "end_date": "2024-06",
