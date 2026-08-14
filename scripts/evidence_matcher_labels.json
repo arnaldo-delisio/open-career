@@ -1,0 +1,413 @@
+{
+ "criterion": "Labelled by Claude (the implementing agent), not by Arnaldo, one pass, 80 pairs sampled deterministically at seed 7: half flagged by at least one candidate rule, half drawn at random from the rest. match=true when holding the capability would be direct evidence toward what the phrase asks for, meaning the phrase's subject matter is substantially the capability's subject matter. Shared generic vocabulary (experience, systems, team, product), topical adjacency, and boilerplate sentences that state no requirement are labelled false.",
+ "sample": {
+  "pairs": 80,
+  "positive": 15,
+  "negative": 65,
+  "seed": 7,
+  "labeller": "claude-opus-5",
+  "labelled_at": "2026-08-14"
+ },
+ "labels": [
+  {
+   "phrase": "Proven track record of troubleshooting complex production issues across multiple layers (application, data, infrastructure, network)",
+   "capability": "AI application architecture",
+   "match": false
+  },
+  {
+   "phrase": "Solid experience building production software systems (backend and / or full stack).",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Some experience with AI coding assistants is a plus, and you are definitely open-minded about leveraging AI to boost your daily workflow.",
+   "capability": "AI application architecture",
+   "match": false
+  },
+  {
+   "phrase": "Demonstrated experience shipping systems to production and end-to-end ownership of them",
+   "capability": "Client engagement ownership",
+   "match": false
+  },
+  {
+   "phrase": "Experience with compliance, KYC, or financial reporting systems.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "You are comfortable owning features from infrastructure and backend systems all the way to shipping functionality that powers the product.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Experience owning a product area end-to-end, from shipping new features through long-term maintenance and iteration.",
+   "capability": "End-to-end product delivery",
+   "match": true
+  },
+  {
+   "phrase": "1–2+ years using AI tools to improve program efficiency (evidence automation, gap analysis, continuous monitoring)",
+   "capability": "AI application architecture",
+   "match": false
+  },
+  {
+   "phrase": "Compensation will vary based on factors, including skill level, proficiencies, transferable knowledge, and experience.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Exact tool match matters far less than deep backend judgment and a track record of safely changing systems that are not allowed to be wrong.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "As a member of our team, you will help us scale and innovate our financial risk management framework and processes.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "Quality, excellence, and agility drive our delivery processes and you will help us level these up.",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "Its leading vector database and knowledge engine, Pinecone Nexus, power accurate, performant AI applications for more than 9,000 customers and 800,000 developers worldwide.",
+   "capability": "AI application architecture",
+   "match": false
+  },
+  {
+   "phrase": "Additionally, you will own product cost management for Skydio’s Drones and Docks.",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "Day to day, you'll take ownership of hard problems from idea to production.",
+   "capability": "Production operations and delivery discipline",
+   "match": true
+  },
+  {
+   "phrase": "Demonstrated ability to build and evangelize a product vision that earns trust across engineering, design, and executive leadership.",
+   "capability": "Team leadership and coordination",
+   "match": true
+  },
+  {
+   "phrase": "Contribute to the organization and ongoing management of Legal team knowledge bases, templates and playbooks.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "Partner with the Practice Manager to support a positive, collaborative approach between the Member Experience and the Medical Team",
+   "capability": "Team leadership and coordination",
+   "match": true
+  },
+  {
+   "phrase": "Basic Knowledge of SAP, Microsoft Word and Excel.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "a 60-min video-call with Cyril, Engineering Manager, to discuss your experience and share more details about the team",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "Strong product sense and ability to work cross-functionally in a fast-moving company",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "Experience hiring, ramping, and developing SE's in a high-growth team",
+   "capability": "Team leadership and coordination",
+   "match": true
+  },
+  {
+   "phrase": "You'll own the technical backbone that makes data trustworthy and accessible, ensuring our data infrastructure keeps pace with an ambitious and fast-moving organization.",
+   "capability": "Infrastructure and deployment",
+   "match": true
+  },
+  {
+   "phrase": "Has an advanced degree in a quantitative discipline (Statistics, Mathematics, Computer Science, Physics, Economics) or equivalent depth through production experience",
+   "capability": "Production operations and delivery discipline",
+   "match": false
+  },
+  {
+   "phrase": "Highly proficient in Excel and financial systems, with strong attention to detail and comfort working through data, reconciliations, and reporting dependencies.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Strong industry experience and technical understanding related to Devs, DevOps, application monitoring, software release tools, and/or broader cloud-native application infrastructure platforms",
+   "capability": "Infrastructure and deployment",
+   "match": true
+  },
+  {
+   "phrase": "Get familiar with the Celonis Process Intelligence Platform by watching this",
+   "capability": "Stakeholder discovery and process mapping",
+   "match": false
+  },
+  {
+   "phrase": "Hands-on Terraform experience - able to author and provision new infrastructure independently, not just modify existing modules.",
+   "capability": "Infrastructure and deployment",
+   "match": true
+  },
+  {
+   "phrase": "The Experience team is at the center of one of the most exciting transitions in software development history — the shift from human-driven to agent-driven product experiences.",
+   "capability": "Multi-agent orchestration",
+   "match": false
+  },
+  {
+   "phrase": "Its leading vector database and knowledge engine, Pinecone Nexus, power accurate, performant AI applications for more than 9,000 customers and 800,000 developers worldwide.",
+   "capability": "RAG and knowledge systems",
+   "match": true
+  },
+  {
+   "phrase": "You combine technical strategy, people leadership and operational excellence to create the conditions for teams to make strong decisions, execute with clarity and continuously improve their engineering standards.",
+   "capability": "Team leadership and coordination",
+   "match": true
+  },
+  {
+   "phrase": "Comfortable with navigating technology platforms, including Excel and Google Suite, with the ability of picking up new software and tech quickly",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "Ability to guide customers in DevOps, CI/CD, and modern release practices, including experimentation and progressive delivery.",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "Comfortable leading a team selling to national and Canadian accounts",
+   "capability": "Team leadership and coordination",
+   "match": true
+  },
+  {
+   "phrase": "You will execute critical business operations, support reporting and business systems, and help scale operational processes across the organization.",
+   "capability": "Production operations and delivery discipline",
+   "match": false
+  },
+  {
+   "phrase": "Demonstrated experience shipping systems to production and end-to-end ownership of them",
+   "capability": "Production operations and delivery discipline",
+   "match": true
+  },
+  {
+   "phrase": "Proficient knowledge and understanding of Python and the following programming languages:",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "As a part of a growing team, you will have the unique opportunity to become influential in shaping our product and work closely with other engineers, product and design.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "For decades, turning an idea into software required so much capital, technical fluency, and time that many ideas never came to life.",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "As the Localization Operations Specialist, you will own the day-to-day localization run that keeps BlaBlaCar's product speaking 40+ locales across Android, iOS, and web.",
+   "capability": "Production operations and delivery discipline",
+   "match": false
+  },
+  {
+   "phrase": "You're comfortable owning systems end-to-end, including on-call responsibilities",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "The ambition is to create a Hub in Austin with 100+ people over the next couple of years.",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "If you’re excited about this role, and your past experience doesn’t align perfectly with every qualification in the job description, we encourage you to apply nevertheless.",
+   "capability": "Governance and human-in-the-loop controls",
+   "match": false
+  },
+  {
+   "phrase": "We're a small team, so you'll have the opportunity to do more than review accounts.",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "You are comfortable owning features from infrastructure and backend systems all the way to shipping functionality that powers the product.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "Experience owning a product area end-to-end, from shipping new features through long-term maintenance and iteration.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "6+ years of tech sales experience — ideally closing new business at the Mid Market or Enterprise level;",
+   "capability": "Governance and human-in-the-loop controls",
+   "match": false
+  },
+  {
+   "phrase": "Ability to demonstrate a portfolio of AI first principles.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Liderarás proyectos estratégicos de Customer Experience Excellence (CEX), coordinando eficazmente a equipos multidisciplinares de Producto, Operaciones, Contact Center y Tecnología.",
+   "capability": "AI application architecture",
+   "match": false
+  },
+  {
+   "phrase": "Your specific compensation within this range will be determined by factors such as your geographic location, relevant experience, and job-related skills.",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "You're comfortable pulling and interpreting analytics to understand what's working and what isn't",
+   "capability": "Governance and human-in-the-loop controls",
+   "match": false
+  },
+  {
+   "phrase": "Experience with prototyping directly in code, or with tools like Figma, Origami, etc",
+   "capability": "Stakeholder discovery and process mapping",
+   "match": false
+  },
+  {
+   "phrase": "– Build strong relationships with partners, proactively helping them optimize performance and drive sales.",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "Experience working with a portfolio of accounts, supporting a",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "Experience directing video and motion work, not just static and copy",
+   "capability": "End-to-end product delivery",
+   "match": false
+  },
+  {
+   "phrase": "As a Senior Engineer, you will drive, lead and collaborate on projects both inside and outside the platform.",
+   "capability": "Client engagement ownership",
+   "match": false
+  },
+  {
+   "phrase": "Ability to work in a structured manner and quickly comprehend new topics and interrelationships",
+   "capability": "Client engagement ownership",
+   "match": false
+  },
+  {
+   "phrase": "Strong industry experience and technical understanding related to Devs, DevOps, application monitoring, software release tools, and/or broader cloud-native application infrastructure platforms",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "We're happy to hire candidates who are very capable, even if they have no prior professional software experience.",
+   "capability": "Client engagement ownership",
+   "match": false
+  },
+  {
+   "phrase": "Basic Knowledge of SAP, Microsoft Word and Excel.",
+   "capability": "Production operations and delivery discipline",
+   "match": false
+  },
+  {
+   "phrase": "For decades, turning an idea into software required so much capital, technical fluency, and time that many ideas never came to life.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "Understand and qualify customer goals with KPIs and effectively articulate Algolia’s ability to meet them",
+   "capability": "Production operations and delivery discipline",
+   "match": false
+  },
+  {
+   "phrase": "You will inherit serious retrieval foundations and own architecture of everything that comes next.",
+   "capability": "RAG and knowledge systems",
+   "match": true
+  },
+  {
+   "phrase": "Offer amounts are determined by multiple factors such as a candidate's experience and expertise.",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "Partner with the Practice Manager to support a positive, collaborative approach between the Member Experience and the Medical Team",
+   "capability": "Governance and human-in-the-loop controls",
+   "match": false
+  },
+  {
+   "phrase": "Superior writing and oral advocacy skills",
+   "capability": "Client engagement ownership",
+   "match": false
+  },
+  {
+   "phrase": "The role spans multiple disease areas and data sources, requiring strong software practices, careful data curation, and the ability to quickly develop clinical domain expertise.",
+   "capability": "Stakeholder discovery and process mapping",
+   "match": false
+  },
+  {
+   "phrase": "You'll oversee Provider Operations end-to-end, including licensing, credentialing, onboarding, workforce management, scheduling, and provider support.",
+   "capability": "Team leadership and coordination",
+   "match": true
+  },
+  {
+   "phrase": "Offer amounts are determined by multiple factors such as a candidate's experience and expertise.",
+   "capability": "Governance and human-in-the-loop controls",
+   "match": false
+  },
+  {
+   "phrase": "Paid month off after 4 years & every 2 years thereafter",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Doctrine employs over 230 people and has been growing steadily and profitably for several years.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "To do that, you must have a strong analytical mindset and communication skills to provide pragmatic and strategic advice to both internal and external stakeholders on compliance matters.",
+   "capability": "Infrastructure and deployment",
+   "match": false
+  },
+  {
+   "phrase": "Familiaridade com práticas de",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "Experience in using Playwright, Cypress, Selenium, Puppeteer or other test automation frameworks for end-to-end system testing.",
+   "capability": "Client engagement ownership",
+   "match": false
+  },
+  {
+   "phrase": "As our CEO Michel Tricot puts it, \"the last ten years were all about structured data.",
+   "capability": "Team leadership and coordination",
+   "match": false
+  },
+  {
+   "phrase": "Extensive computer and database expertise, Microsoft Word, Excel, Outlook, and type no less than 35 wpm.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  },
+  {
+   "phrase": "Fintech, payments experience or interest",
+   "capability": "Software delivery (Python, TypeScript)",
+   "match": false
+  },
+  {
+   "phrase": "Working knowledge of SEO/SEM, email/CRM, and marketing automation platforms",
+   "capability": "Stakeholder discovery and process mapping",
+   "match": false
+  },
+  {
+   "phrase": "Proven experience as a DevOps engineer or in a similar role",
+   "capability": "Infrastructure and deployment",
+   "match": true
+  },
+  {
+   "phrase": "Additionally, you will own product cost management for Skydio’s Drones and Docks.",
+   "capability": "RAG and knowledge systems",
+   "match": false
+  }
+ ]
+}

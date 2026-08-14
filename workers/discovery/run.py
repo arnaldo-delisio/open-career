@@ -67,6 +67,7 @@ from domain.promotion import (
 )
 from domain.requirements import (
     BudgetExhausted,
+    CONTENT_FRACTION_BP,
     JudgedFitService,
     RequirementExtractionService,
     StageOutputError,
@@ -152,6 +153,11 @@ class DiscoveryConfig:
     probe_backoff_base_days: int = 1
     probe_backoff_cap_days: int = 30
     disabled_reprobe_days: int = 30
+    # The evidence-coverage match threshold (§5), in basis points of a
+    # capability's content tokens. Calibrated, not guessed
+    # (scripts/calibrate_evidence_matcher.py); config because the threshold
+    # trades precision against recall and that is a judgment call.
+    coverage_match_fraction_bp: int = CONTENT_FRACTION_BP
     # Lease liveness is TTL only, so the TTL is also how long an interrupted
     # run blocks the next one. The two numbers are one design: the TTL must
     # cover the renewal interval PLUS the longest gap between two checkpoints,
@@ -175,6 +181,7 @@ class DiscoveryConfig:
             "probe_backoff_base_days": self.probe_backoff_base_days,
             "probe_backoff_cap_days": self.probe_backoff_cap_days,
             "disabled_reprobe_days": self.disabled_reprobe_days,
+            "coverage_match_fraction_bp": self.coverage_match_fraction_bp,
             "lease_ttl_s": self.lease_ttl_s,
             "lease_renew_interval_s": self.lease_renew_interval_s,
             "model_call_timeout_s": MODEL_CALL_TIMEOUT_S,
@@ -261,6 +268,12 @@ def load_config(storage) -> DiscoveryConfig:
             # a poll admit against a zero fetch budget (or forbid every poll).
             raise ValueError(
                 f"{CONFIG_FILENAME} key '{key}' must be at least 1, got {value}")
+        if key == "coverage_match_fraction_bp" and not 1 <= value <= 10000:
+            # 0 would match every capability against every phrase (coverage
+            # saturated at 100%, the signal destroyed in the other direction).
+            raise ValueError(
+                f"{CONFIG_FILENAME} key '{key}' must be between 1 and 10000"
+                f" basis points, got {value}")
         if key in ("lease_ttl_s", "lease_renew_interval_s") and value < 1:
             raise ValueError(
                 f"{CONFIG_FILENAME} key '{key}' must be at least 1, got {value}")
@@ -811,9 +824,26 @@ class DiscoveryRunner:
         """§5: deterministic gate over the promotion cap, half reserved for
         dependency-epoch re-gates (oldest verdicts first), half for the new
         backlog in priority order, backfilled both ways."""
-        self._fenced_write(
+        # The stale-epoch sweep only runs when this stage can actually
+        # re-gate: with the gate cap at zero (or already spent), superseding
+        # cancels queued work and enqueues nothing to replace it, which
+        # silently empties the queue. Claiming re-checks the epoch anyway
+        # (§4), so skipping the sweep costs no safety, and when it does run
+        # the run reports how many rows it cancelled rather than leaving the
+        # loss invisible.
+        if not ledger.admits("gate"):
+            ledger.note_exhausted("gate")  # the stop is still recorded
+            self._notes.append(
+                "gate stage has no capacity this run; the stale-epoch queue"
+                " sweep was skipped and no queued row was superseded")
+            return
+        superseded = self._fenced_write(
             lambda proxy: SqlitePromotionQueueRepository(proxy)
             .supersede_stale_epochs(epoch, "dependency epoch advanced"))
+        if superseded:
+            self._notes.append(
+                f"stale-epoch queue sweep superseded {superseded} queued"
+                f" row(s) for re-gating under epoch {epoch}")
         context = self._gate_context()
         sources = {s.id: s for s in self._registry.list_all()}
 
@@ -927,11 +957,18 @@ class DiscoveryRunner:
                  capability_names: list[str]) -> None:
         if not self._model_available:
             return
+        # No capacity means no claim: claiming a row re-checks its epoch and
+        # supersedes a stale one (§4), so touching rows a capped-out stage can
+        # never work would cancel queued work for nothing.
+        if not ledger.admits("extraction"):
+            ledger.note_exhausted("extraction")
+            return
         service = RequirementExtractionService(
             self._model, load_prompt("requirement_extraction.md"))
         pending = self._queue.pending_for_stage("pending_extraction", run_seq)
         rows = [PendingRow(r.id, r.enqueue_seq, pre_extraction_priority_key(
             r.lane_rank, r.first_seen, r.opportunity_id)) for r in pending]
+        reused = 0
         for row_id in _staged_order(self._config.budget.max_extraction_calls, rows):
             self._checkpoint()  # lease re-checked before each claim/transition
             claimed = self._claim_row(row_id, epoch)
@@ -943,12 +980,25 @@ class DiscoveryRunner:
                 # not a bad run. It releases neutrally like any other row
                 # failure (bounded retry, terminal failed state) and the run
                 # continues with the remaining rows.
-                posting_json, _ = self._posting_payload(claimed)
-                # Every model call, the schema retry included, is charged
-                # against the budget before it is made.
-                requirements = service.extract(
-                    posting_json,
-                    charge=lambda: ledger.try_spend("extraction"))
+                posting_json, stored = self._posting_payload(
+                    claimed, require_epoch=False)
+                # Extraction reads the posting only (OC-5: structure from the
+                # posting, nothing from the user's state), so a result pinned
+                # to this same version stays valid when the dependency epoch
+                # advances: it is reused and re-stamped, and only coverage,
+                # which does depend on the graph, is recomputed. Without this
+                # every career-graph write would buy the whole extracted
+                # backlog a second time.
+                stored_phrases = stored.get("requirements")
+                if stored_phrases is not None and not stored.get("stale"):
+                    requirements = tuple(r["phrase"] for r in stored_phrases)
+                    reused += 1
+                else:
+                    # Every model call, the schema retry included, is charged
+                    # against the budget before it is made.
+                    requirements = service.extract(
+                        posting_json,
+                        charge=lambda: ledger.try_spend("extraction"))
             except BudgetExhausted:
                 return  # exhaustion recorded; the row stays claimable next run
             except ModelUnavailableError as e:
@@ -960,7 +1010,9 @@ class DiscoveryRunner:
                 self._release_failed(row_id, _neutral_reason(e), run_seq)
                 continue
             self._checkpoint()  # the model call may have outlived the lease
-            coverage = coverage_bp(requirements, capability_names)
+            coverage = coverage_bp(
+                requirements, capability_names,
+                self._config.coverage_match_fraction_bp)
             # The proposal write and the extracted transition land as one
             # fenced transaction: a crash cannot persist a result the queue
             # does not know about (which would cost a second charged call).
@@ -978,10 +1030,18 @@ class DiscoveryRunner:
                     row_id, "extracted", coverage_bp=coverage)
 
             self._fenced_write(record_extraction)
+        if reused:
+            self._notes.append(
+                f"reused stored requirement proposals for {reused} row(s) whose"
+                " opportunity version was unchanged; no extraction call made"
+                " for them")
 
     def _judge(self, ledger: BudgetLedger, epoch: int, run_seq: int,
                capability_names: list[str]) -> None:
         if not self._model_available:
+            return
+        if not ledger.admits("judgment"):
+            ledger.note_exhausted("judgment")  # same rule as extraction
             return
         service = JudgedFitService(self._model, load_prompt("judged_fit.md"))
         # Crash recovery: a pending_judgment row with no committed result can
@@ -1081,7 +1141,8 @@ class DiscoveryRunner:
             lambda proxy: SqlitePromotionQueueRepository(proxy).release_failed(
                 row_id, reason, run_seq))
 
-    def _posting_payload(self, queue_row) -> tuple[str, dict]:
+    def _posting_payload(self, queue_row,
+                         require_epoch: bool = True) -> tuple[str, dict]:
         """Replay the pinned version's posting from its committed snapshot's
         raw payload (§1: raw responses are the replayable input) and build the
         isolation payload. Also returns the stored requirement proposals."""
@@ -1117,9 +1178,14 @@ class DiscoveryRunner:
             if version.location_json else [],
             salary=salary_view)
         proposals = json.loads(opportunity.requirement_proposals_json or "{}")
-        if proposals.get("version_id") != version.id or proposals.get("stale") \
-                or proposals.get("epoch") != queue_row.epoch:
+        stale = (proposals.get("version_id") != version.id
+                 or proposals.get("stale")
+                 or (require_epoch and proposals.get("epoch") != queue_row.epoch))
+        if stale:
             # Stale by pin, closure, or epoch: never silently reused (§4/§5).
+            # Extraction asks with require_epoch False: its result depends on
+            # the pinned version alone, so an epoch bump does not invalidate
+            # it (judgment consumes user state and keeps the epoch pin).
             proposals = {}
         return posting_json, proposals
 

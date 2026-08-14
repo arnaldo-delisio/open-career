@@ -672,7 +672,12 @@ def test_epoch_bump_invalidates_completed_results_and_next_run_rejudges(instance
     assert "Judged fit (stale" in shown
 
     run2 = run_once(conn, storage, adapters, config, model)
-    assert len(model.prompts) == calls_before + 2  # re-extracted and re-judged
+    # One call, not two: the stored requirement proposals are pinned to the
+    # opportunity VERSION, which did not change, and extraction reads only the
+    # posting, so the epoch bump re-judges without buying the extraction a
+    # second time. Coverage, which does depend on the graph, is recomputed
+    # deterministically for free.
+    assert len(model.prompts) == calls_before + 1  # re-judged only
     refreshed = repo.get(opp.id)
     judged = json.loads(refreshed.judged_fit_json)
     assert judged["epoch"] == run2.epoch == current_epoch
@@ -1282,6 +1287,59 @@ def test_model_stages_respect_their_own_caps_including_zero(instance):
         == "pending_extraction"  # waits for a run with budget
 
 
+def test_a_zero_gate_cap_never_empties_the_queue_and_the_sweep_is_reported(instance):
+    """Found by calibrating discovery against the live instance: the gate ran
+    its stale-epoch queue sweep BEFORE checking its own cap, so a run with
+    `max_new_opportunities_gated: 0` superseded every queued row and re-gated
+    nothing to replace it, reporting only "nothing attempted at that stage".
+    With no capacity the sweep does not run at all (claiming re-checks the
+    epoch anyway), and when it does run the run says how many rows it
+    cancelled."""
+    conn, storage = instance
+    seed_source(conn)
+    # A row left unfinished at the current epoch: judgment capped at zero.
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(judged_fit_k=0))
+    run_once(conn, storage, adapters, config, model)
+    queue = SqlitePromotionQueueRepository(conn)
+    assert [r.state for r in queue.list_rows()] == ["extracted"]
+
+    SqliteUserPolicyRepository(conn).set_policy(
+        "compensation_floor",
+        {"amount": 1, "currency": "EUR", "period": "annual"},
+        source="user_edit")
+
+    _, adapters2, config2, model2 = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_new_opportunities_gated=0, max_extraction_calls=0,
+                      judged_fit_k=0))
+    run = run_once(conn, storage, adapters2, config2, model2)
+
+    rows = queue.list_rows()
+    assert [r.state for r in rows] == ["extracted"]  # not destroyed
+    notes = json.loads(run.source_outcomes_json)["notes"]
+    assert any("stale-epoch queue sweep was skipped" in n for n in notes)
+    assert run.exhausted_stage == "gate"  # the stop is still recorded
+
+    # Codex r2: the guard asks the ledger, so the SHARED model-call cap
+    # counts too. With the stage caps generous but max_total_model_calls at
+    # zero, neither model stage may claim, so the stale row survives.
+    _, adaptersT, configT, modelT = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_new_opportunities_gated=0, max_total_model_calls=0))
+    run_once(conn, storage, adaptersT, configT, modelT)
+    assert [r.state for r in queue.list_rows()] == ["extracted"]
+    assert modelT.prompts == []
+
+    # With capacity, the sweep runs and reports its count.
+    _, adapters3, config3, model3 = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")))
+    run3 = run_once(conn, storage, adapters3, config3, model3)
+    notes3 = json.loads(run3.source_outcomes_json)["notes"]
+    assert any("superseded 1 queued row(s)" in n for n in notes3)
+
+
 def test_a_run_records_every_stage_that_ran_out(instance):
     """A run may exhaust several stages; the status names the first refusal
     and the notes name them all."""
@@ -1543,6 +1601,27 @@ def test_probe_bodies_are_captured_durably_for_every_outcome(
     for locator in raw_pages:
         assert storage.exists(locator)
     assert storage.read_bytes(raw_pages[0]) == body  # byte-true evidence
+
+
+def test_the_coverage_match_threshold_is_config_and_bounded(instance):
+    """The calibrated match threshold (§5 amendment) is configurable because
+    it trades precision against recall, and bounded because 0 would match
+    every capability against every phrase, saturating coverage at 100%."""
+    conn, storage = instance
+    from workers.discovery.run import load_config
+
+    storage.write_text("discovery.json", '{"coverage_match_fraction_bp": 0}')
+    with pytest.raises(ValueError, match="between 1 and 10000"):
+        load_config(storage)
+    storage.write_text("discovery.json", '{"coverage_match_fraction_bp": 10001}')
+    with pytest.raises(ValueError, match="between 1 and 10000"):
+        load_config(storage)
+    storage.write_text("discovery.json", '{"coverage_match_fraction_bp": 6600}')
+    config = load_config(storage)
+    assert config.coverage_match_fraction_bp == 6600
+    assert json.loads(config.to_json())["coverage_match_fraction_bp"] == 6600
+    storage.write_text("discovery.json", "{}")
+    assert load_config(storage).coverage_match_fraction_bp == 5000
 
 
 def test_zero_page_cost_is_rejected_and_zero_fetch_budget_never_fetches(instance):

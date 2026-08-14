@@ -509,12 +509,13 @@ class SqlitePromotionQueueRepository(PromotionQueueRepository):
                     f" AND version_id != ? AND state IN {_UNFINISHED_SQL}",
                     (reason, opportunity_id, current_version_id))
 
-    def supersede_stale_epochs(self, current_epoch: int, reason: str) -> None:
+    def supersede_stale_epochs(self, current_epoch: int, reason: str) -> int:
         with self._conn:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "UPDATE promotion_queue SET state = 'superseded',"
                 f" superseded_reason = ?, {_TOUCH} WHERE epoch < ?"
                 f" AND state IN {_UNFINISHED_SQL}", (reason, current_epoch))
+            return cursor.rowcount
 
     def _supersede(self, row_id: str, reason: str) -> None:
         self._conn.execute(

@@ -13,12 +13,14 @@ from domain.requirements import (
     RequirementExtractionService,
     StageOutputError,
     build_posting_json,
+    capability_matches,
     coverage_bp,
     matched_requirements,
     parse_judged_fit,
     parse_requirements,
     render_extraction_prompt,
     render_judgment_prompt,
+    stopword_free_tokens,
 )
 from prompts import load_prompt
 
@@ -252,8 +254,33 @@ def test_coverage_is_deterministic_token_match_in_basis_points():
     assert coverage_bp(requirements, []) == 0
 
 
-def test_multi_token_capability_requires_all_tokens():
-    assert coverage_bp(("event-driven architecture design",),
-                       ["event-driven architecture"]) == 10000
-    assert coverage_bp(("architecture design",),
-                       ["event-driven architecture"]) == 0
+def test_multi_word_capability_matches_on_calibrated_content_fraction():
+    """The calibrated rule (§5 amendment): connectives are dropped and a
+    match needs the configured fraction of a capability's CONTENT tokens, not
+    every token of its name. The all-tokens rule it replaced matched nothing
+    at all on real postings (0.25% of a 400 sentence corpus)."""
+    capability = "Governance and human-in-the-loop controls"
+    # Content tokens: governance, human, loop, controls. Three of four.
+    assert coverage_bp(("human-in-the-loop governance controls required",),
+                       [capability]) == 10000
+    # One of four is below the 50% default and stays unmatched.
+    assert coverage_bp(("strong governance background",), [capability]) == 0
+    # Connectives alone never match: they are not content tokens.
+    assert coverage_bp(("experience in the and of it",), [capability]) == 0
+    assert capability_matches("event-driven architecture design",
+                              ["event-driven architecture"]) == \
+        ["event-driven architecture"]
+
+
+def test_the_match_threshold_is_configurable():
+    capability = "RAG and knowledge systems"  # content: rag, knowledge, systems
+    phrase = "experience with knowledge systems"  # two of three
+    assert coverage_bp((phrase,), [capability], 6600) == 10000
+    assert coverage_bp((phrase,), [capability], 7500) == 0
+    # A capability name made only of connectives has no content tokens, so it
+    # matches nothing at all: keeping them would make the emptiest name the
+    # broadest match key ("the" would match half the corpus).
+    assert stopword_free_tokens("end-to-end") == frozenset()
+    assert coverage_bp(("end to end ownership of the product",),
+                       ["end-to-end"]) == 0
+    assert capability_matches("experience in the and of it", ["and the"]) == []

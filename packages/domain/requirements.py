@@ -280,28 +280,68 @@ class JudgedFitService:
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
+# Connectives and structural words carry no capability signal: a capability
+# name like "Governance and human-in-the-loop controls" is about governance,
+# human, loop and controls, and requiring "and", "in" and "the" to appear
+# verbatim in one excerpt is what made the shipped all-tokens rule match
+# nothing at all. A closed, tested constant, never a model.
+CAPABILITY_STOPWORDS: frozenset[str] = frozenset({
+    "a", "an", "and", "at", "by", "for", "from", "in", "into", "of", "on",
+    "or", "the", "to", "with", "within", "across", "over", "under", "via",
+    "end", "e2e", "using", "based",
+})
 
-def _tokens(text: str) -> frozenset[str]:
+# The fraction of a capability's content tokens a phrase must carry, in basis
+# points, calibrated in scripts/calibrate_evidence_matcher.py against real
+# postings and a hand-labelled sample. Configurable because the threshold is a
+# judgment call; the calibration numbers are recorded in the design doc §5.
+CONTENT_FRACTION_BP = 5000
+
+
+def normalized_tokens(text: str) -> frozenset[str]:
+    """Lowercased alphanumeric tokens: the shared normalization both sides of
+    the match run through."""
     return frozenset(_TOKEN.findall(text.lower()))
 
 
-def matched_requirements(requirements: tuple, capability_names: list) -> list[str]:
-    """Requirements with at least one capability whose name tokens all appear
-    in the requirement's tokens (normalized token match, deterministic)."""
-    capability_tokens = [(_tokens(name)) for name in capability_names]
-    capability_tokens = [t for t in capability_tokens if t]
+def stopword_free_tokens(text: str) -> frozenset[str]:
+    """A capability name's content tokens: normalized, connectives dropped.
+    A name made only of connectives ("end-to-end") has no content and matches
+    nothing: keeping its tokens would turn the emptiest possible name into
+    the broadest match key, inflating coverage on ordinary words (Codex r3)."""
+    return normalized_tokens(text) - CAPABILITY_STOPWORDS
+
+
+def capability_matches(requirement: str, capability_names: list,
+                       threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
+    """The capability names matching one requirement phrase: at least
+    `threshold_bp` of the capability's content tokens present in the phrase's
+    normalized tokens. Deterministic, zero model involvement (OC-37 §5)."""
+    phrase_tokens = normalized_tokens(requirement)
     matched = []
-    for requirement in requirements:
-        req_tokens = _tokens(requirement)
-        if any(cap <= req_tokens for cap in capability_tokens):
-            matched.append(requirement)
+    for name in capability_names:
+        content = stopword_free_tokens(name)
+        if not content:
+            continue
+        hit = len(content & phrase_tokens)
+        if (10000 * hit) // len(content) >= threshold_bp:
+            matched.append(name)
     return matched
 
 
-def coverage_bp(requirements: tuple, capability_names: list) -> int:
+def matched_requirements(requirements: tuple, capability_names: list,
+                         threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
+    """Requirements matched by at least one capability (normalized token
+    match on content tokens, at the calibrated fraction threshold)."""
+    return [requirement for requirement in requirements
+            if capability_matches(requirement, capability_names, threshold_bp)]
+
+
+def coverage_bp(requirements: tuple, capability_names: list,
+                threshold_bp: int = CONTENT_FRACTION_BP) -> int:
     """Coverage as integer basis points: the fraction of extracted
     requirements with an eligible-capability match. No requirements = 0."""
     if not requirements:
         return 0
-    matched = matched_requirements(requirements, capability_names)
+    matched = matched_requirements(requirements, capability_names, threshold_bp)
     return (10000 * len(matched)) // len(requirements)

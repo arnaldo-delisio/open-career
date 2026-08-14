@@ -85,18 +85,35 @@ class BudgetLedger:
     def spent(self, stage: str) -> int:
         return self._spend[stage]
 
-    def try_spend(self, stage: str) -> bool:
-        """Record one unit of stage spend if the stage cap (and, for model
-        stages, the total model-call cap) allows it; else record exhaustion
-        and answer False. Never raises on exhaustion."""
+    def _refusal(self, stage: str) -> Exhaustion | None:
+        """The exhaustion one unit of this stage would hit, or None if it
+        fits. Every budget question asks this, so a caller checking before
+        acting and a caller spending see exactly the same answer."""
         if stage not in self._spend:
             raise ValueError(f"unknown budget stage '{stage}'")
         limit = getattr(self._budget, STAGE_LIMITS[stage])
         if self._spend[stage] >= limit:
-            self._note_exhaustion(stage, self._spend[stage], limit)
-            return False
+            return Exhaustion(stage=stage, spent=self._spend[stage], limit=limit)
         if stage in _MODEL_STAGES and self._model_calls >= self._budget.max_total_model_calls:
-            self._note_exhaustion(stage, self._model_calls, self._budget.max_total_model_calls)
+            return Exhaustion(stage=stage, spent=self._model_calls,
+                              limit=self._budget.max_total_model_calls)
+        return None
+
+    def admits(self, stage: str) -> bool:
+        """Whether one unit of this stage would fit, recording nothing. Used
+        before work that costs something even when the call is refused: a
+        model-stage row is CLAIMED before its call, and claiming a stale row
+        supersedes it, so a stage with no capacity must not touch rows at
+        all. Covers the shared model-call cap, not only the stage cap."""
+        return self._refusal(stage) is None
+
+    def try_spend(self, stage: str) -> bool:
+        """Record one unit of stage spend if the stage cap (and, for model
+        stages, the total model-call cap) allows it; else record exhaustion
+        and answer False. Never raises on exhaustion."""
+        refusal = self._refusal(stage)
+        if refusal is not None:
+            self._note_exhaustion(refusal.stage, refusal.spent, refusal.limit)
             return False
         self._spend[stage] += 1
         if stage in _MODEL_STAGES:
@@ -107,10 +124,10 @@ class BudgetLedger:
         """Record exhaustion for a stage without spending: used when work is
         refused admission because the remaining budget cannot cover its
         estimated cost (e.g. a poll deferred for fetch budget)."""
-        if stage not in self._spend:
-            raise ValueError(f"unknown budget stage '{stage}'")
-        limit = getattr(self._budget, STAGE_LIMITS[stage])
-        self._note_exhaustion(stage, self._spend[stage], limit)
+        refusal = self._refusal(stage) or Exhaustion(
+            stage=stage, spent=self._spend[stage],
+            limit=getattr(self._budget, STAGE_LIMITS[stage]))
+        self._note_exhaustion(refusal.stage, refusal.spent, refusal.limit)
 
     def _note_exhaustion(self, stage: str, spent: int, limit: int) -> None:
         self._exhausted.add(stage)

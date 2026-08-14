@@ -576,7 +576,9 @@ class PromotionQueueRepository(ABC):
         rows when the opportunity closed, current_version_id None)."""
 
     @abstractmethod
-    def supersede_stale_epochs(self, current_epoch: int, reason: str) -> None: ...
+    def supersede_stale_epochs(self, current_epoch: int, reason: str) -> int:
+        """Cancel unfinished rows computed under an older dependency epoch,
+        answering how many rows were cancelled so the run can report it."""
 
 
 class DiscoveryRunRepository(ABC):
