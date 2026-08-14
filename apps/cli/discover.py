@@ -358,13 +358,21 @@ def run_sources_supersessions(conn, say, as_json: bool = False) -> None:
 def run_queue_list(conn, say, as_json: bool = False,
                    state: str | None = None, limit: int = 50) -> None:
     queue = SqlitePromotionQueueRepository(conn)
-    rows = queue.list_rows(state)
-    total = len(rows)
-    shown = rows[:limit]
+    # The counts and the rows are two queries; a concurrent `discover run` may
+    # write between them, so they are read inside one deferred read
+    # transaction and therefore describe one snapshot (Codex r1 finding 1).
+    conn.execute("BEGIN DEFERRED")
+    try:
+        counts = queue.counts_by_state(state)
+        total = sum(counts.values())
+        shown = queue.list_rows(state, limit=limit)
+    finally:
+        conn.rollback()
     if as_json:
         say(json.dumps({
             "total": total,
             "shown": len(shown),
+            "counts_by_state": counts,
             "rows": [{
                 "id": r.id, "opportunity_id": r.opportunity_id,
                 "version_id": r.version_id, "state": r.state,
@@ -374,7 +382,7 @@ def run_queue_list(conn, say, as_json: bool = False,
             } for r in shown],
         }, indent=2))
         return
-    if not rows:
+    if not total:
         say("promotion queue is empty")
         return
     for r in shown:
@@ -382,7 +390,11 @@ def run_queue_list(conn, say, as_json: bool = False,
             f"  attempts={r.attempts}"
             + (f"  coverage_bp={r.coverage_bp}" if r.coverage_bp is not None else "")
             + (f"  failure={r.failure_reason}" if r.failure_reason else ""))
+    # The per-state breakdown travels with the count line so truncation can
+    # never hide live work behind a page of terminal rows.
+    breakdown = ", ".join(f"{s}={n}" for s, n in counts.items())
     say(f"{total} row(s) total, showing {len(shown)}"
+        f" (by state: {breakdown})"
         + (f" (raise --limit past {limit} for more)" if total > limit else ""))
 
 

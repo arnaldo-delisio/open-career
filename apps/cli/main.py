@@ -24,6 +24,7 @@ from adapters.storage.portability import (
     import_from_file,
 )
 from adapters.storage.sqlite_edges import EdgeValidationError, SqliteCareerEdgeRepository
+from domain.discovery import QUEUE_STATE_DISPLAY_ORDER
 from domain.edges import EDGE_VOCABULARY, CareerEdge
 from domain.ids import new_id
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
@@ -767,10 +768,13 @@ def main(argv: list[str] | None = None) -> None:
     queue_sub = p_d_queue.add_subparsers(dest="queue_command", required=True)
     p_dq_list = queue_sub.add_parser("list", help="list queue rows")
     p_dq_list.add_argument("--json", action="store_true")
-    p_dq_list.add_argument("--state", default=None)
+    p_dq_list.add_argument("--state", default=None,
+                           choices=list(QUEUE_STATE_DISPLAY_ORDER),
+                           help="show only rows in this state")
     p_dq_list.add_argument("--limit", type=_nonnegative_int, default=50,
-                           help="max rows shown (default 50); a total count"
-                                " line always prints")
+                           help="max rows shown (default 50); actionable rows"
+                                " sort first and a per-state count line always"
+                                " prints")
     p_dq_list.set_defaults(func=cmd_discover)
     discover_sub.add_parser(
         "recover", help="clear an expired run lease (a live lease is refused,"

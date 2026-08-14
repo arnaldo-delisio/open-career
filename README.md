@@ -164,10 +164,19 @@ open-career discover run          # one budgeted run (see the budget note below)
 open-career discover opportunities [--status open] [--gate pass|fail|none|stale]
 open-career discover show <opportunity-id>
 open-career discover duplicates   # report-only cross-source view, never merged
-open-career discover queue list [--state failed] [--limit N]
+open-career discover queue list [--state pending_extraction] [--limit N]
 open-career discover runs          # run history: how each run ended, and why it aborted
 open-career discover recover      # clears an expired run lease; a live one is refused
 ```
+
+`discover queue list` sorts the actionable states first (`pending_extraction`,
+`extracted`, `pending_judgment`) ahead of the terminal and inert ones (`judged`,
+`superseded`, `failed`), with a deterministic `enqueue_seq`, `id` tie-break, so a
+truncated page always shows live work before dead work. The closing line reports the
+per-state counts beside the total (`438 row(s) total, showing 10 (by state:
+pending_extraction=322, superseded=116)`), so truncation cannot hide a backlog;
+`--json` carries the same breakdown as a `counts_by_state` mapping. `--state` filters to
+one state, and the counts then cover that state alone.
 
 **A bare `discover run` spends real subscription model calls.** The locked budget prints
 as the run's first line, before anything is spent; the defaults allow up to 30 extraction

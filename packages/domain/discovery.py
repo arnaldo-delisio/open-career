@@ -25,6 +25,13 @@ QueueState = Literal[
     "pending_extraction", "extracted", "pending_judgment", "judged",
     "superseded", "failed",
 ]
+# Operator display order for queue rows: the actionable stage states first
+# (the live work), then the terminal and inert ones, so a truncated listing
+# never shows only dead rows.
+QUEUE_STATE_DISPLAY_ORDER: tuple[str, ...] = (
+    "pending_extraction", "extracted", "pending_judgment",
+    "judged", "superseded", "failed",
+)
 RunStatus = Literal["running", "completed", "budget_exhausted", "failed",
                     "interrupted"]
 CohortOutcome = Literal["pending", "closed", "reappeared"]

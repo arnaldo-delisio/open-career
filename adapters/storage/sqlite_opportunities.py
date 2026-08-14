@@ -8,6 +8,7 @@ import sqlite3
 
 from domain.closure import ClosurePlan, PendingCohort
 from domain.discovery import (
+    QUEUE_STATE_DISPLAY_ORDER,
     Opportunity,
     OpportunityVersion,
     QueueRow,
@@ -335,6 +336,11 @@ _QUEUE_TRANSITIONS: dict[tuple[str, str], bool] = {
 }
 
 _UNFINISHED_STATES = ("pending_extraction", "extracted", "pending_judgment")
+# Operator display order (domain-owned); any state not listed sorts after all
+# of these, by state name, so an added state degrades visibly, never randomly.
+_QUEUE_STATE_RANK_SQL = "CASE state " + " ".join(
+    f"WHEN '{s}' THEN {i}" for i, s in enumerate(QUEUE_STATE_DISPLAY_ORDER)
+) + f" ELSE {len(QUEUE_STATE_DISPLAY_ORDER)} END, state"
 # The same set as a SQL literal for the supersession sweeps.
 _UNFINISHED_SQL = "('pending_extraction', 'extracted', 'pending_judgment')"
 
@@ -377,13 +383,32 @@ class SqlitePromotionQueueRepository(PromotionQueueRepository):
             (state, current_run_seq)).fetchall()
         return [QueueRow(*r) for r in rows]
 
-    def list_rows(self, state: str | None = None) -> list[QueueRow]:
+    def list_rows(self, state: str | None = None,
+                  limit: int | None = None) -> list[QueueRow]:
+        """Actionable states first (§4 stage order), then terminal and inert
+        ones, so a truncated operator view never shows only dead work. The
+        tie-break is enqueue_seq then id, so the ordering is deterministic and
+        stable across runs."""
+        clause = " WHERE state = ?" if state is not None else ""
+        params: tuple = (state,) if state is not None else ()
+        sql = (f"SELECT {_QUEUE_COLUMNS} FROM promotion_queue{clause}"
+               f" ORDER BY {_QUEUE_STATE_RANK_SQL}, enqueue_seq, id")
+        if limit is not None:
+            sql += " LIMIT ?"
+            params = params + (limit,)
+        rows = self._conn.execute(sql, params).fetchall()
+        return [QueueRow(*r) for r in rows]
+
+    def counts_by_state(self, state: str | None = None) -> dict[str, int]:
+        """Row counts per state in the same display order as list_rows, so a
+        truncated listing still reports the whole queue's shape."""
         clause = " WHERE state = ?" if state is not None else ""
         params = (state,) if state is not None else ()
         rows = self._conn.execute(
-            f"SELECT {_QUEUE_COLUMNS} FROM promotion_queue{clause}"
-            " ORDER BY enqueue_seq", params).fetchall()
-        return [QueueRow(*r) for r in rows]
+            f"SELECT state, COUNT(*) FROM promotion_queue{clause}"
+            f" GROUP BY state ORDER BY {_QUEUE_STATE_RANK_SQL}, state",
+            params).fetchall()
+        return {r[0]: r[1] for r in rows}
 
     def claim(self, row_id: str, current_epoch: int,
               owner_token: str | None = None,

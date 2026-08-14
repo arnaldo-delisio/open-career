@@ -533,7 +533,14 @@ class PromotionQueueRepository(ABC):
     def get(self, row_id: str): ...
 
     @abstractmethod
-    def list_rows(self, state: str | None = None) -> list: ...
+    def list_rows(self, state: str | None = None,
+                  limit: int | None = None) -> list:
+        """Rows in operator display order: actionable states before terminal
+        and inert ones, deterministic tie-break, optionally truncated."""
+
+    @abstractmethod
+    def counts_by_state(self, state: str | None = None) -> dict:
+        """Row counts per state, in the same display order as list_rows."""
 
     @abstractmethod
     def pending_for_stage(self, state: str, current_run_seq: int) -> list:

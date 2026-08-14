@@ -510,6 +510,153 @@ def test_queue_list_limit_and_total_count(instance, capsys):
     assert view["total"] == 3 and view["shown"] == 2 and len(view["rows"]) == 2
 
 
+def _seed_mixed_queue(instance):
+    """Superseded rows enqueued FIRST (lower enqueue_seq), so a naive
+    enqueue-order listing would show nothing but dead work."""
+    conn = connect(instance)
+    try:
+        from adapters.storage.sqlite_discovery import SqliteSourceRegistryRepository
+        from adapters.storage.sqlite_opportunities import (
+            SqlitePromotionQueueRepository,
+        )
+        from domain.discovery import Source
+        SqliteSourceRegistryRepository(conn).add(Source(
+            id="src_m", ats_type="greenhouse", tenant_slug="acme",
+            origin="manual"))
+        queue = SqlitePromotionQueueRepository(conn)
+        for i in range(4):
+            opp_id = _seed_opportunity(conn, "src_m", f"dead{i}", f"Dead {i}",
+                                       "Rome, IT")
+            row = queue.enqueue(opp_id, f"ver_{opp_id}", 0,
+                                "2026-08-01T00:00:00Z", 0)
+            conn.execute("UPDATE promotion_queue SET state = 'superseded'"
+                         " WHERE id = ?", (row.id,))
+        conn.commit()
+        for i in range(2):
+            opp_id = _seed_opportunity(conn, "src_m", f"live{i}", f"Live {i}",
+                                       "Rome, IT")
+            queue.enqueue(opp_id, f"ver_{opp_id}", 0,
+                          "2026-08-02T00:00:00Z", 0)
+    finally:
+        conn.close()
+
+
+def test_queue_list_surfaces_actionable_rows_before_terminal_ones(instance,
+                                                                  capsys):
+    """Drive defect: 322 pending rows behind 116 superseded ones made the queue
+    look dead. Actionable states sort first under the default limit, and the
+    count line reports the per-state shape so truncation cannot mislead."""
+    _seed_mixed_queue(instance)
+    main(["discover", "queue", "list", "--limit", "2"])
+    out = capsys.readouterr().out
+    listed = [ln for ln in out.splitlines() if ln.startswith("pmq_")]
+    assert len(listed) == 2
+    assert all("pending_extraction" in ln for ln in listed)
+    assert "6 row(s) total, showing 2" in out
+    assert "by state: pending_extraction=2, superseded=4" in out
+    assert "raise --limit past 2" in out
+
+
+def test_queue_list_json_reports_per_state_counts_and_stable_order(instance,
+                                                                   capsys):
+    _seed_mixed_queue(instance)
+    main(["discover", "queue", "list", "--json"])
+    view = json.loads(capsys.readouterr().out)
+    assert view["total"] == 6 and view["shown"] == 6
+    assert view["counts_by_state"] == {"pending_extraction": 2,
+                                       "superseded": 4}
+    assert [r["state"] for r in view["rows"]] == \
+        ["pending_extraction"] * 2 + ["superseded"] * 4
+    main(["discover", "queue", "list", "--json"])
+    again = json.loads(capsys.readouterr().out)
+    assert [r["id"] for r in again["rows"]] == [r["id"] for r in view["rows"]]
+
+
+def test_queue_list_state_filter_counts_only_that_state(instance, capsys):
+    _seed_mixed_queue(instance)
+    main(["discover", "queue", "list", "--state", "superseded", "--json"])
+    view = json.loads(capsys.readouterr().out)
+    assert view["counts_by_state"] == {"superseded": 4}
+    assert view["total"] == 4
+    with pytest.raises(SystemExit) as excinfo:
+        main(["discover", "queue", "list", "--state", "nonsense"])
+    assert excinfo.value.code == 2  # argparse rejects an unknown state
+
+
+def test_queue_list_limit_zero_still_reports_the_backlog(instance, capsys):
+    """A zero limit is a counts-only view, never 'the queue is empty'."""
+    _seed_mixed_queue(instance)
+    main(["discover", "queue", "list", "--limit", "0"])
+    out = capsys.readouterr().out
+    assert "promotion queue is empty" not in out
+    assert "6 row(s) total, showing 0" in out
+    assert "by state: pending_extraction=2, superseded=4" in out
+
+
+def test_queue_list_orders_every_known_state(instance, capsys):
+    """All six durable states sort in the documented display order."""
+    conn = connect(instance)
+    try:
+        from adapters.storage.sqlite_discovery import SqliteSourceRegistryRepository
+        from adapters.storage.sqlite_opportunities import (
+            SqlitePromotionQueueRepository,
+        )
+        from domain.discovery import QUEUE_STATE_DISPLAY_ORDER, Source
+        SqliteSourceRegistryRepository(conn).add(Source(
+            id="src_all", ats_type="greenhouse", tenant_slug="acme",
+            origin="manual"))
+        queue = SqlitePromotionQueueRepository(conn)
+        # Insert in reverse display order, so enqueue order cannot produce the
+        # expected answer by accident.
+        for state in reversed(QUEUE_STATE_DISPLAY_ORDER):
+            opp_id = _seed_opportunity(conn, "src_all", state, state,
+                                       "Rome, IT")
+            row = queue.enqueue(opp_id, f"ver_{opp_id}", 0,
+                                "2026-08-01T00:00:00Z", 0)
+            conn.execute("UPDATE promotion_queue SET state = ? WHERE id = ?",
+                         (state, row.id))
+        conn.commit()
+    finally:
+        conn.close()
+    main(["discover", "queue", "list", "--json"])
+    from domain.discovery import QUEUE_STATE_DISPLAY_ORDER
+    view = json.loads(capsys.readouterr().out)
+    assert [r["state"] for r in view["rows"]] == list(QUEUE_STATE_DISPLAY_ORDER)
+    assert list(view["counts_by_state"]) == list(QUEUE_STATE_DISPLAY_ORDER)
+
+
+def test_queue_list_counts_and_rows_come_from_one_snapshot(instance, capsys,
+                                                           monkeypatch):
+    """Codex r1 finding 1: a concurrent writer between the two reads must not
+    make the count line disagree with the rows."""
+    _seed_mixed_queue(instance)
+    from adapters.storage.sqlite_opportunities import (
+        SqlitePromotionQueueRepository,
+    )
+    original = SqlitePromotionQueueRepository.counts_by_state
+
+    def counts_then_write(self, state=None):
+        result = original(self, state)
+        other = connect(instance)
+        try:
+            other.execute(
+                "INSERT INTO promotion_queue (id, opportunity_id, version_id,"
+                " lane_rank, first_seen, enqueue_seq, epoch)"
+                " SELECT 'pmq_intruder', opportunity_id, version_id, 0,"
+                " first_seen, 999, 999 FROM promotion_queue LIMIT 1")
+            other.commit()
+        finally:
+            other.close()
+        return result
+
+    monkeypatch.setattr(SqlitePromotionQueueRepository, "counts_by_state",
+                        counts_then_write)
+    main(["discover", "queue", "list", "--json"])
+    view = json.loads(capsys.readouterr().out)
+    assert view["total"] == 6 and len(view["rows"]) == 6
+    assert "pmq_intruder" not in [r["id"] for r in view["rows"]]
+
+
 def test_zero_cap_exhaustion_wording(instance, capsys, monkeypatch):
     """Drive defect 8: a zero stage cap reads as 'nothing attempted', never as
     an exhausted budget."""
