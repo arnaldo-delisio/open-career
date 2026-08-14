@@ -376,7 +376,8 @@ def run_queue_list(conn, say, as_json: bool = False,
             "rows": [{
                 "id": r.id, "opportunity_id": r.opportunity_id,
                 "version_id": r.version_id, "state": r.state,
-                "coverage_bp": r.coverage_bp, "attempts": r.attempts,
+                "coverage_bp": r.coverage_bp,
+                "relevance_score": r.relevance_score, "attempts": r.attempts,
                 "failure_reason": r.failure_reason,
                 "superseded_reason": r.superseded_reason,
             } for r in shown],
@@ -388,6 +389,7 @@ def run_queue_list(conn, say, as_json: bool = False,
     for r in shown:
         say(f"{r.id}  {r.state}  opp={r.opportunity_id}"
             f"  attempts={r.attempts}"
+            f"  relevance={r.relevance_score}"
             + (f"  coverage_bp={r.coverage_bp}" if r.coverage_bp is not None else "")
             + (f"  failure={r.failure_reason}" if r.failure_reason else ""))
     # The per-state breakdown travels with the count line so truncation can

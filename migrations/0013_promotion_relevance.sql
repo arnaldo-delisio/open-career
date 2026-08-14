@@ -1,0 +1,19 @@
+-- Title relevance leads the frozen pre-extraction ordering key (§4).
+--
+-- Lane-then-recency alone spends the whole extraction and judged-fit budget on
+-- whatever was polled first: with a quarter-million-row arrival-ordered backlog
+-- that is one company's operations postings, and genuinely on-target roles sit
+-- unread behind them. The count of distinct target-family vocabulary terms a
+-- posting's TITLE matches is deterministic and free, so it decides which rows
+-- earn a paid model call and in what order.
+--
+-- Persisted rather than recomputed, like every other component of the frozen
+-- key: the ordering must be stable across runs, and a families.json edit is
+-- supposed to change it only through the dependency-epoch path (0012), which
+-- re-gates and re-enqueues. A recomputed score would drift silently instead.
+--
+-- Existing rows default to 0: they were enqueued before relevance existed, so
+-- the score is unknown, not zero-by-measurement. They keep their lane/recency
+-- order behind every scored row, and the next epoch bump re-enqueues them with
+-- a real score.
+ALTER TABLE promotion_queue ADD COLUMN relevance_score INTEGER NOT NULL DEFAULT 0;

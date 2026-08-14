@@ -482,9 +482,12 @@ class OpportunityRepository(ABC):
     @abstractmethod
     def set_proposed_action(self, opportunity_id: str, action: str,
                             version_id: str | None = None,
-                            epoch: int | None = None) -> None:
+                            epoch: int | None = None,
+                            reason: str | None = None) -> None:
         """Persist the machine proposal with its version and epoch pin;
-        readers must never present a stale-pinned proposal as current."""
+        readers must never present a stale-pinned proposal as current. reason
+        records why the opportunity went no further (backlog_discard_reason)
+        and is cleared when none is given."""
 
     @abstractmethod
     def set_human_action(self, opportunity_id: str, action: str | None) -> None: ...
@@ -525,9 +528,11 @@ class PromotionQueueRepository(ABC):
 
     @abstractmethod
     def enqueue(self, opportunity_id: str, version_id: str, lane_rank: int,
-                first_seen: str, epoch: int):
+                first_seen: str, epoch: int, relevance_score: int = 0):
         """Insert with the frozen ordering key and the next enqueue sequence;
-        merging by (opportunity, version) key returns the existing row."""
+        merging by (opportunity, version) key returns the existing row.
+        relevance_score is the title's target-family term count, frozen here
+        so the ordering is stable across runs."""
 
     @abstractmethod
     def get(self, row_id: str): ...

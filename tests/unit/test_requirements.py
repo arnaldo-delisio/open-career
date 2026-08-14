@@ -21,6 +21,7 @@ from domain.requirements import (
     render_extraction_prompt,
     render_judgment_prompt,
     stopword_free_tokens,
+    title_relevance_score,
 )
 from prompts import load_prompt
 
@@ -314,3 +315,33 @@ def test_short_vocabulary_terms_must_match_every_content_token():
     assert coverage_bp(("human-in-the-loop governance controls required",),
                        [term]) == 10000
     assert coverage_bp(("strong governance background",), [term]) == 0
+
+
+def test_title_relevance_counts_distinct_matched_vocabulary_terms():
+    """Relevance decides which rows reach the paid model stages: the count of
+    distinct target-family vocabulary terms a posting title matches."""
+    vocabulary = ["Solutions Architect", "Delivery Lead", "Python",
+                  "Machine Learning Engineer"]
+    on_target = title_relevance_score(
+        "Senior Python Solutions Architect", vocabulary)
+    single = title_relevance_score("Backend Python Developer", vocabulary)
+    assert on_target > single == 1
+    # An unrelated operations title carries no target-family signal at all,
+    # which is what keeps it out of the queue entirely.
+    assert title_relevance_score(
+        "Warehouse Operations Shift Supervisor", vocabulary) == 0
+    # No title (a posting version with the field absent) scores zero rather
+    # than raising: it is a row with no signal, not a broken run.
+    assert title_relevance_score(None, vocabulary) == 0
+
+
+def test_title_relevance_keeps_the_short_term_full_match_rule():
+    """The short-term rule is the reason a two-token family label does not
+    score a hit on any title containing one generic half of it."""
+    assert title_relevance_score("Client Success Manager",
+                                 ["Client Specialist"]) == 0
+    assert title_relevance_score("Client Specialist, Enterprise",
+                                 ["Client Specialist"]) == 1
+    # 3+ token terms keep the calibrated fraction, untouched.
+    assert title_relevance_score("Lead Data Platform Engineer",
+                                 ["Data Platform Reliability Engineer"]) == 1

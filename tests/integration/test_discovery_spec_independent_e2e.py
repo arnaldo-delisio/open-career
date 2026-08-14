@@ -78,10 +78,13 @@ def env(tmp_path):
     conn.execute("PRAGMA foreign_keys = ON")
     storage = LocalStorageAdapter(tmp_path)
     # Placeholder target families: families.json is required for every run
-    # (OC-42) and is the run's coverage vocabulary.
+    # (OC-42) and is the run's coverage vocabulary. The adjacent title covers
+    # the canned postings' titles, which title relevance now needs for a row to
+    # be promoted at all.
     storage.write_text("families.json", json.dumps({"families": [{
         "name": "Example Platform Family", "seniority": "senior",
-        "search_vocabulary": ["Python"], "adjacent_titles": []}]}))
+        "search_vocabulary": ["Python"],
+        "adjacent_titles": ["Engineer"]}]}))
     source = Source(id=new_id("src"), ats_type="greenhouse",
                     tenant_slug="acme", origin="curated")
     registry = SqliteSourceRegistryRepository(conn)

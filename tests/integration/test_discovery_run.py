@@ -83,9 +83,15 @@ class FakeModel(ModelAdapter):
 # fixture writes one. "Python" is the vocabulary term the coverage scenario
 # leans on; the seniority is stated but the canned postings carry no band, so
 # the seniority dimension skips exactly as it did before.
+#
+# The adjacent titles cover the canned postings' titles ("Engineer",
+# "Designer"): title relevance decides promotion now, so a fixture whose
+# vocabulary matched no title would leave every scenario with an empty queue
+# and test the filter instead of the funnel.
 FIXTURE_FAMILIES = {"families": [{
     "name": "Example Platform Family", "seniority": "senior",
-    "search_vocabulary": ["Python"], "adjacent_titles": []}]}
+    "search_vocabulary": ["Python"],
+    "adjacent_titles": ["Engineer", "Designer", "Analyst", "Scientist"]}]}
 
 
 @pytest.fixture
@@ -1727,11 +1733,14 @@ def test_discovery_indexes_exist(instance):
 def test_cold_start_fallback_is_recorded_on_the_run(instance):
     conn, storage = instance
     seed_source(conn)
-    # Vocabulary that matches nothing in the canned posting: coverage is
-    # uniformly zero, which is the cold start the fallback order exists for.
+    # A vocabulary that matches the posting's TITLE (so the row is still
+    # promoted: title relevance decides that now) but none of its extracted
+    # requirements ("Python", "SQL"): coverage is uniformly zero, which is the
+    # cold start the fallback order exists for.
     storage.write_text("families.json", json.dumps({"families": [{
         "name": "Example Unrelated Family", "seniority": "senior",
-        "search_vocabulary": ["deep sea welding"], "adjacent_titles": []}]}))
+        "search_vocabulary": ["deep sea welding"],
+        "adjacent_titles": ["Engineer"]}]}))
     _, adapters, config, model = make_env(
         conn, storage, gh_board(gh_job(1, "Engineer")))
     run = run_once(conn, storage, adapters, config, model)
@@ -2171,3 +2180,80 @@ def test_a_per_row_model_call_failure_still_charges_retries_and_diagnoses(
     assert "model call failed operationally" in reason
     assert "ModelCallError" in reason and "provider status 400" in reason
     assert "Engineer" not in reason and "Fable 5" not in reason  # no content
+
+
+# ----------------------------------------------- title relevance and promotion
+
+def test_relevance_decides_promotion_without_touching_the_gate_verdict(instance):
+    """The OC-37 boundary: relevance decides PROMOTION, never the verdict. An
+    off-target posting is not a decisive structured conflict, so it stays a
+    gate 'pass'; it simply never earns a paid model call, with the reason
+    recorded on the opportunity."""
+    conn, storage = instance
+    seed_source(conn)
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer"),
+                                gh_job(2, "Warehouse Shift Supervisor")))
+    run_once(conn, storage, adapters, config, model)
+
+    opps = SqliteOpportunityRepository(conn)
+    by_title = {}
+    for opp in opps.list_filtered():
+        version = opps.list_versions(opp.id)[-1]
+        by_title[version.title] = opp
+    on_target = by_title["Engineer"]
+    off_target = by_title["Warehouse Shift Supervisor"]
+
+    # Both were gated, and both passed: the verdict is unchanged.
+    for opp in (on_target, off_target):
+        assert opp.backlog_state == "gated"
+        assert opps.get_gate_verdict(opp.latest_gate_verdict_id).verdict == "pass"
+
+    rows = SqlitePromotionQueueRepository(conn).list_rows()
+    assert [r.opportunity_id for r in rows] == [on_target.id]
+    assert rows[0].relevance_score == 1
+
+    # The non-promoted row says why, and proposes ignoring rather than pursuing.
+    assert off_target.proposed_action == "ignore"
+    assert "title" in off_target.backlog_discard_reason
+    assert on_target.proposed_action == "monitor"
+    assert on_target.backlog_discard_reason is None
+
+
+def test_an_irrelevant_backlog_cannot_consume_any_stage_cap(instance):
+    """The measured defect: an arrival-ordered backlog of off-target postings
+    spent the whole paid-model budget, aging half included. They never enter
+    the queue now, so neither half of the cap can reach them."""
+    conn, storage = instance
+    seed_source(conn)
+    # The irrelevant rows arrive FIRST, so they own both the oldest enqueue
+    # sequence (the aging half) and the best recency slot of their lane.
+    board = gh_board(*[gh_job(i, f"Warehouse Shift Supervisor {i}")
+                       for i in range(1, 21)],
+                     gh_job(99, "Senior Backend Engineer"))
+    _, adapters, config, model = make_env(
+        conn, storage, board, budget=Budget(max_extraction_calls=4))
+    run = run_once(conn, storage, adapters, config, model)
+
+    rows = SqlitePromotionQueueRepository(conn).list_rows()
+    assert len(rows) == 1 and rows[0].state == "judged"
+    # Only the relevant posting was ever paid for.
+    assert json.loads(run.spend_json)["extraction"] == 1
+
+
+def test_the_relevance_score_is_frozen_at_enqueue_and_stable_across_runs(instance):
+    conn, storage = instance
+    seed_source(conn)
+    transport, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Python Engineer")))
+    run_once(conn, storage, adapters, config, model)
+    queue = SqlitePromotionQueueRepository(conn)
+    first = queue.list_rows()[0]
+    assert first.relevance_score == 2  # "Python" and the adjacent title
+
+    # A second run over the same unchanged board neither re-scores nor
+    # re-enqueues: the frozen key is what makes the ordering stable.
+    run_once(conn, storage, adapters, config, model)
+    rows = queue.list_rows()
+    assert len(rows) == 1
+    assert rows[0].id == first.id and rows[0].relevance_score == 2

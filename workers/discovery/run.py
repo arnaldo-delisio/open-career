@@ -69,6 +69,7 @@ from domain.requirements import (
     build_posting_json,
     coverage_bp,
     render_judged_reason,
+    title_relevance_score,
 )
 from prompts import load_prompt
 from workers.discovery.probe import probe_source
@@ -980,6 +981,7 @@ class DiscoveryRunner:
                 f"stale-epoch queue sweep superseded {superseded} queued"
                 f" row(s) for re-gating under epoch {epoch}")
         context = self._gate_context()
+        vocabulary = vocabulary_terms(self._families)
         sources = {s.id: s for s in self._registry.list_all()}
 
         regates = self._opps.list_open_with_stale_gate(epoch)
@@ -1024,13 +1026,13 @@ class DiscoveryRunner:
                         else self._current_version(current, opps)
                 if version is not None:
                     self._gate_one(opps, queue, opportunity.id, version,
-                                   source, context, epoch)
+                                   source, context, epoch, vocabulary)
 
             self._fenced_write(gate)
 
     def _gate_one(self, opps, queue, opportunity_id: str,
                   version: OpportunityVersion, source, context: GateContext,
-                  epoch: int) -> None:
+                  epoch: int, vocabulary: list[str]) -> None:
         """One gate evaluation's writes, on the caller's transactional repos."""
         facts = _posting_facts(version)
         result = evaluate_gate(facts, replace(context, company=CompanyMetadata(
@@ -1044,12 +1046,36 @@ class DiscoveryRunner:
                 "reason": d.reason, "note": d.note,
             } for d in result.dimensions])))
         if result.verdict == "pass":
+            # Relevance decides PROMOTION, never the verdict. OC-37 locks the
+            # gate as a deterministic exclusion check that fails only on
+            # decisive structured conflicts; a job being off-target is not one,
+            # so a zero-relevance row stays a 'pass' that simply did not earn a
+            # paid model call. Do NOT be tempted to turn this into a gate
+            # failure: that would put a soft, vocabulary-shaped judgment inside
+            # the audited exclusion record.
+            relevance = title_relevance_score(
+                version.title, vocabulary,
+                self._config.coverage_match_fraction_bp)
+            if relevance == 0:
+                # No target-family term in the title at all. The reason is
+                # recorded on the opportunity so the operator can see why a
+                # passing row is not queued, and a families.json edit bumps the
+                # dependency epoch (migration 0012), which re-gates this row
+                # and re-scores it here: the vocabulary is the only knob, and
+                # it needs no second invalidation path.
+                opps.set_proposed_action(
+                    opportunity_id, "ignore", version_id=version.id,
+                    epoch=epoch,
+                    reason="gate passed but no target-family term matched the"
+                           " title; not promoted to the model stages")
+                return
             # OC-23: the proposal defaults to MONITOR; nothing here pursues.
             opps.set_proposed_action(opportunity_id, "monitor",
                                      version_id=version.id, epoch=epoch)
             queue.enqueue(
                 opportunity_id, version.id, lane_rank(source.origin),
-                opps.get(opportunity_id).first_seen, epoch)
+                opps.get(opportunity_id).first_seen, epoch,
+                relevance_score=relevance)
         else:
             opps.set_proposed_action(opportunity_id, "ignore",
                                      version_id=version.id, epoch=epoch)
@@ -1090,7 +1116,8 @@ class DiscoveryRunner:
             self._model, load_prompt("requirement_extraction.md"))
         pending = self._queue.pending_for_stage("pending_extraction", run_seq)
         rows = [PendingRow(r.id, r.enqueue_seq, pre_extraction_priority_key(
-            r.lane_rank, r.first_seen, r.opportunity_id)) for r in pending]
+            r.relevance_score, r.lane_rank, r.first_seen, r.opportunity_id))
+            for r in pending]
         reused = 0
         for row_id in _staged_order(self._config.budget.max_extraction_calls, rows):
             self._checkpoint()  # lease re-checked before each claim/transition
@@ -1184,7 +1211,8 @@ class DiscoveryRunner:
             self._notes.append("cold_start_fallback: judged-fit order used the"
                                " deterministic lane/recency fallback")
             rows = [PendingRow(r.id, r.enqueue_seq, pre_extraction_priority_key(
-                r.lane_rank, r.first_seen, r.opportunity_id)) for r in extracted]
+                r.relevance_score, r.lane_rank, r.first_seen,
+                r.opportunity_id)) for r in extracted]
         else:
             rows = [PendingRow(r.id, r.enqueue_seq, coverage_priority_key(
                 r.coverage_bp or 0, r.enqueue_seq)) for r in extracted]

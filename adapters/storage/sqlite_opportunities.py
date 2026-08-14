@@ -211,17 +211,23 @@ class SqliteOpportunityRepository(OpportunityRepository):
 
     def set_proposed_action(self, opportunity_id: str, action: str,
                             version_id: str | None = None,
-                            epoch: int | None = None) -> None:
+                            epoch: int | None = None,
+                            reason: str | None = None) -> None:
         """The proposal lands with its version and epoch pin, so readers can
-        tell a current proposal from one derived under superseded inputs."""
+        tell a current proposal from one derived under superseded inputs.
+
+        reason is the existing backlog_discard_reason field: the one auditable
+        place this schema keeps "why this opportunity went no further". It is
+        written on every proposal, so a row that stops being ignored has its
+        stale reason cleared in the same write rather than keeping it."""
         if action not in ("ignore", "monitor", "pursue"):
             raise ValueError(f"unknown proposed action '{action}'")
         with self._conn:
             self._conn.execute(
                 "UPDATE opportunities SET proposed_action = ?,"
                 " proposed_action_version_id = ?, proposed_action_epoch = ?,"
-                f" {_TOUCH} WHERE id = ?",
-                (action, version_id, epoch, opportunity_id))
+                f" backlog_discard_reason = ?, {_TOUCH} WHERE id = ?",
+                (action, version_id, epoch, reason, opportunity_id))
 
     def set_human_action(self, opportunity_id: str, action: str | None) -> None:
         with self._conn:
@@ -324,7 +330,7 @@ class SqliteOpportunityRepository(OpportunityRepository):
 
 _QUEUE_COLUMNS = (
     "id, opportunity_id, version_id, state, lane_rank, first_seen, enqueue_seq,"
-    " epoch, coverage_bp, attempts, next_attempt_run_seq, claimed_by,"
+    " epoch, coverage_bp, relevance_score, attempts, next_attempt_run_seq, claimed_by,"
     " claimed_fence, superseded_reason, failure_reason, created_at, updated_at"
 )
 
@@ -350,7 +356,8 @@ class SqlitePromotionQueueRepository(PromotionQueueRepository):
         self._conn = conn
 
     def enqueue(self, opportunity_id: str, version_id: str, lane_rank: int,
-                first_seen: str, epoch: int) -> QueueRow:
+                first_seen: str, epoch: int,
+                relevance_score: int = 0) -> QueueRow:
         with self._conn:
             existing = self._conn.execute(
                 "SELECT id FROM promotion_queue WHERE opportunity_id = ?"
@@ -364,10 +371,10 @@ class SqlitePromotionQueueRepository(PromotionQueueRepository):
             ).fetchone()[0]
             self._conn.execute(
                 "INSERT INTO promotion_queue (id, opportunity_id, version_id,"
-                " lane_rank, first_seen, enqueue_seq, epoch)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " lane_rank, first_seen, enqueue_seq, epoch, relevance_score)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (row_id, opportunity_id, version_id, lane_rank, first_seen,
-                 enqueue_seq, epoch))
+                 enqueue_seq, epoch, relevance_score))
         return self.get(row_id)
 
     def get(self, row_id: str) -> QueueRow | None:

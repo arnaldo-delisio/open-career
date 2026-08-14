@@ -195,9 +195,10 @@ class StoredGateVerdict:
 
 @dataclass(frozen=True)
 class QueueRow:
-    """A promotion-queue row (§4), pinned to an immutable version. lane_rank,
-    first_seen, and enqueue_seq are the frozen pre-extraction ordering key;
-    coverage_bp (basis points, integer) is set at the extracted transition."""
+    """A promotion-queue row (§4), pinned to an immutable version.
+    relevance_score, lane_rank, first_seen, and enqueue_seq are the frozen
+    pre-extraction ordering key; coverage_bp (basis points, integer) is set at
+    the extracted transition."""
 
     id: str
     opportunity_id: str
@@ -208,6 +209,7 @@ class QueueRow:
     enqueue_seq: int
     epoch: int
     coverage_bp: int | None = None
+    relevance_score: int = 0
     attempts: int = 0
     next_attempt_run_seq: int = 0
     claimed_by: str | None = None

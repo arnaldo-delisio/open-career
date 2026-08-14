@@ -35,11 +35,21 @@ class PendingRow:
     priority_key: tuple
 
 
-def pre_extraction_priority_key(lane: int, first_seen: str, opportunity_id: str) -> tuple:
-    """Frozen at enqueue: curated-layer priority, then first_seen recency
-    (newest first), then opportunity id tie-break. first_seen is an ISO UTC
-    timestamp, so lexical order is chronological."""
-    return (lane, _descending(first_seen), opportunity_id)
+def pre_extraction_priority_key(relevance: int, lane: int, first_seen: str,
+                                opportunity_id: str) -> tuple:
+    """Frozen at enqueue: title relevance first (most matched target-family
+    vocabulary terms first), then curated-layer priority, then first_seen
+    recency (newest first), then opportunity id tie-break. first_seen is an ISO
+    UTC timestamp, so lexical order is chronological.
+
+    Relevance leads because lane and recency describe where a row came from,
+    not whether anyone wants it: with a large arrival-ordered backlog they
+    spend the whole paid-model budget on whichever tenant was polled first. The
+    score is computed once at enqueue and persisted on the queue row
+    (relevance_score), so the ordering is stable across runs; the value comes
+    from domain.requirements.title_relevance_score, which this module
+    deliberately does not import (it takes the integer, not the vocabulary)."""
+    return (-relevance, lane, _descending(first_seen), opportunity_id)
 
 
 def coverage_priority_key(coverage_bp: int, enqueue_seq: int) -> tuple:

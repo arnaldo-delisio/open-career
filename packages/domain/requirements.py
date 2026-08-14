@@ -345,6 +345,26 @@ def vocabulary_matches(requirement: str, vocabulary: list,
     return matched
 
 
+def title_relevance_score(title: str | None, vocabulary: list,
+                          threshold_bp: int = CONTENT_FRACTION_BP) -> int:
+    """How many distinct target-family vocabulary terms a posting's TITLE
+    matches. Zero means the title carries no target-family signal at all.
+
+    The same matcher coverage uses, applied to the one material field that is
+    present before any model call, so it can decide which rows are worth one
+    (workers/discovery/run.py). Deterministic, zero model involvement, and the
+    short-term full-match rule still applies, which is what stops a two-token
+    family name scoring a hit on any title containing 'specialist'.
+
+    It lives here rather than in promotion.py because it is a vocabulary-match
+    operation and reusing vocabulary_matches in place is the whole point; a
+    second matcher would be a second thing to calibrate. promotion.py takes the
+    resulting integer, not the vocabulary."""
+    if not title:
+        return 0
+    return len(vocabulary_matches(title, vocabulary, threshold_bp))
+
+
 def matched_requirements(requirements: tuple, vocabulary: list,
                          threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
     """Requirements matched by at least one vocabulary term (normalized token

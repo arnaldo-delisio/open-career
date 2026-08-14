@@ -20,9 +20,12 @@ from domain.ports import ModelAdapter
 
 # families.json is required for every run (OC-42), so the instance carries a
 # placeholder one; the real target families live in the operator's instance.
+# The adjacent title covers the canned board's posting title: title relevance
+# decides promotion, so a vocabulary matching no title would leave the queue
+# empty and the CLI surfaces with nothing to show.
 FIXTURE_FAMILIES = {"families": [{
     "name": "Example Platform Family", "seniority": "senior",
-    "search_vocabulary": ["Python"], "adjacent_titles": []}]}
+    "search_vocabulary": ["Python"], "adjacent_titles": ["Engineer"]}]}
 
 
 @pytest.fixture

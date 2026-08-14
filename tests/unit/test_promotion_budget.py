@@ -25,10 +25,24 @@ def test_lane_ranks_put_curated_first():
 
 
 def test_pre_extraction_key_orders_lane_then_recency_then_id():
-    older_curated = pre_extraction_priority_key(0, "2026-08-01T00:00:00Z", "opp_a")
-    newer_curated = pre_extraction_priority_key(0, "2026-08-10T00:00:00Z", "opp_b")
-    harvest = pre_extraction_priority_key(2, "2026-08-12T00:00:00Z", "opp_c")
+    older_curated = pre_extraction_priority_key(1, 0, "2026-08-01T00:00:00Z", "opp_a")
+    newer_curated = pre_extraction_priority_key(1, 0, "2026-08-10T00:00:00Z", "opp_b")
+    harvest = pre_extraction_priority_key(1, 2, "2026-08-12T00:00:00Z", "opp_c")
     assert newer_curated < older_curated < harvest
+
+
+def test_relevance_leads_the_pre_extraction_key():
+    # The exact inversion that caused the bug: one company's off-target
+    # postings arrived on the best lane and monopolised the paid stages, while
+    # on-target harvest-lane roles waited behind them.
+    relevant_harvest = pre_extraction_priority_key(
+        3, 2, "2026-08-01T00:00:00Z", "opp_relevant")
+    irrelevant_curated = pre_extraction_priority_key(
+        1, 0, "2026-08-12T00:00:00Z", "opp_irrelevant")
+    assert relevant_harvest < irrelevant_curated
+    # Within one relevance level the existing terms are untouched.
+    assert (pre_extraction_priority_key(3, 0, "2026-08-01T00:00:00Z", "opp_a")
+            < pre_extraction_priority_key(3, 2, "2026-08-12T00:00:00Z", "opp_b"))
 
 
 def test_coverage_key_orders_highest_coverage_first():
@@ -57,6 +71,19 @@ def test_priority_half_backfills_when_few_old_rows_exist():
     rows = rows_for([("only_old", 1, (2, 0))] + [(f"new{i}", 10 + i, (0, i)) for i in range(5)])
     picked = select_for_stage(6, rows)
     assert len(picked) == 6 and "only_old" in picked
+
+
+def test_aging_is_relevance_blind_so_the_queue_filter_is_the_protection():
+    """Stated rather than papered over: select_for_stage's aging half orders by
+    enqueue sequence alone, so an old row wins its half whatever its relevance.
+    That is correct here only because a zero-relevance row is never enqueued
+    (workers/discovery/run.py), which is where the protection lives; aging then
+    ages WITHIN the relevant set, exactly as §4 intends."""
+    old_low_relevance = rows_for([(f"old{i}", i, (0, 2)) for i in range(4)])
+    new_high_relevance = rows_for([(f"new{i}", 100 + i, (-9, 0)) for i in range(10)])
+    picked = select_for_stage(4, old_low_relevance + new_high_relevance)
+    assert picked[:2] == ["old0", "old1"]  # the aging half, relevance ignored
+    assert picked[2:] == ["new0", "new1"]  # the priority half, relevance-led
 
 
 def test_selection_is_deterministic_and_capped():
