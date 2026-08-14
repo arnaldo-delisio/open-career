@@ -18,7 +18,30 @@ DEFAULT_TIMEOUT_SECONDS = 600
 class ModelCallError(RuntimeError):
     """One model call failed operationally (timeout, crash, malformed
     envelope). The backend itself may still be usable; callers can degrade
-    rather than die."""
+    rather than die.
+
+    provider_status carries the provider's own HTTP status when the envelope
+    reported one, so a caller can persist a diagnostic without inspecting the
+    message (which may quote model output)."""
+
+    def __init__(self, message: str, provider_status: int | None = None):
+        super().__init__(message)
+        self.provider_status = provider_status
+
+
+# Provider statuses that describe the BACKEND, never the row being worked: the
+# subscription quota is spent (429), the credentials are rejected (401), the
+# account is not permitted (403), or the provider itself failed (any 5xx). No
+# posting and no retry can fix any of them, so iterating rows against one only
+# burns the run's budget on an identical unrecoverable error (observed live:
+# ten extraction calls in ~50s, ten rows marked failed for something that was
+# never their fault).
+BACKEND_UNAVAILABLE_STATUSES = frozenset({401, 403, 429})
+
+
+def is_backend_unavailable(status: int | None) -> bool:
+    return status is not None and (status in BACKEND_UNAVAILABLE_STATUSES
+                                   or 500 <= status <= 599)
 
 
 class ClaudeCodeAdapter(ModelAdapter):
@@ -95,11 +118,38 @@ class ClaudeCodeAdapter(ModelAdapter):
         except json.JSONDecodeError as e:
             raise ModelCallError(f"'{self._command}' emitted invalid JSON envelope: {e}") from e
         if not isinstance(envelope, dict) or envelope.get("is_error") or "result" not in envelope:
-            raise ModelCallError(f"'{self._command}' reported an error: {envelope}")
+            status = _provider_status(envelope)
+            if is_backend_unavailable(status):
+                # A backend that is unavailable is not a bad row. The message
+                # names the status only: the envelope's `result` field is
+                # provider prose and never travels into a persisted record.
+                error = ModelUnavailableError(
+                    f"'{self._command}' reported provider status {status}"
+                    " (subscription limit, authentication, or permission);"
+                    " the backend is unavailable, not this input")
+                error.provider_status = status
+                raise error
+            raise ModelCallError(
+                f"'{self._command}' reported an error: {envelope}",
+                provider_status=status)
         if not isinstance(envelope["result"], str):
             raise ModelCallError(
                 f"'{self._command}' result field is {type(envelope['result']).__name__}, not text")
         return envelope
+
+
+def _provider_status(envelope) -> int | None:
+    """The provider's own HTTP status from the CLI envelope, when it reports
+    one (`api_error_status`, observed alongside "terminal_reason":"api_error").
+    Absent, non-integer, or outside the HTTP status range reads as unknown,
+    never guessed: the envelope is the CLI's to write, and callers persist this
+    number, so it is range-bounded here rather than trusted."""
+    if not isinstance(envelope, dict):
+        return None
+    status = envelope.get("api_error_status")
+    if not isinstance(status, int) or isinstance(status, bool):
+        return None
+    return status if 100 <= status <= 599 else None
 
 
 def _cli_version(run, command: str) -> str:

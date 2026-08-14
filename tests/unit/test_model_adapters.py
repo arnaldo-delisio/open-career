@@ -267,3 +267,68 @@ def test_the_base_adapter_reports_no_provider_version():
 
     assert Bare().provider_version() == "unavailable"
     assert Bare().complete_with_meta("p") == ("x", {"model": "unreported"})
+
+
+# -- backend unavailable vs. one bad row --------------------------------------
+
+def _quota_envelope(status: int) -> str:
+    """The live envelope shape observed when the operator's subscription limit
+    was hit: rc=0, is_error true, the provider's status, prose in result."""
+    return json.dumps({
+        "type": "result", "subtype": "error_during_execution",
+        "is_error": True, "terminal_reason": "api_error",
+        "api_error_status": status,
+        "result": "You've reached your Fable 5 limit...",
+    })
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 500, 502, 503, 529])
+def test_backend_status_envelopes_raise_model_unavailable(status):
+    """429 (quota), 401 (auth), 403 (permission) and any 5xx (the provider
+    itself failed) describe the backend: no row can fix them, so they must not
+    be charged to the row being worked (5xx added, Codex round 2)."""
+    adapter = ClaudeCodeAdapter(
+        run=lambda *a, **k: FakeProc(_quota_envelope(status)))
+    with pytest.raises(ModelUnavailableError) as excinfo:
+        adapter.complete("p")
+    assert excinfo.value.provider_status == status
+    # The provider's prose never travels in our message.
+    assert "Fable 5 limit" not in str(excinfo.value)
+
+
+def test_a_row_shaped_envelope_error_stays_a_per_row_model_call_error():
+    envelope = json.dumps({"is_error": True, "result": "garbled"})
+    adapter = ClaudeCodeAdapter(run=lambda *a, **k: FakeProc(envelope))
+    with pytest.raises(ModelCallError) as excinfo:
+        adapter.complete("p")
+    assert excinfo.value.provider_status is None
+
+    # A status that is not a backend condition is per-row too, and is carried.
+    adapter = ClaudeCodeAdapter(
+        run=lambda *a, **k: FakeProc(_quota_envelope(400)))
+    with pytest.raises(ModelCallError) as excinfo:
+        adapter.complete("p")
+    assert excinfo.value.provider_status == 400
+
+
+def test_an_out_of_range_provider_status_is_unknown_not_persisted():
+    """The envelope is the CLI's to write and callers persist the status, so
+    it is range-bounded here: a hostile or malformed oversized value reads as
+    unknown and cannot inflate a stored diagnostic (Codex round 1)."""
+    for status in (10 ** 40, -1, 99, 600, "429", True):
+        envelope = json.dumps({"is_error": True, "result": "x",
+                               "api_error_status": status})
+        adapter = ClaudeCodeAdapter(run=lambda *a, **k: FakeProc(envelope))
+        with pytest.raises(ModelCallError) as excinfo:
+            adapter.complete("p")
+        assert excinfo.value.provider_status is None
+
+    # Bounded at the persistence boundary too, not only in the envelope
+    # parser: a caller constructing the error directly cannot widen it.
+    from workers.discovery.run import _diagnostic
+    assert _diagnostic(ModelCallError("x")) == "[ModelCallError]"
+    for bad in (10 ** 40, -1, 99, 600, True, "429"):
+        assert _diagnostic(ModelCallError("x", provider_status=bad)) == \
+            "[ModelCallError]"
+    assert _diagnostic(ModelCallError("x", provider_status=429)) == \
+        "[ModelCallError, provider status 429]"

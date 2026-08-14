@@ -218,6 +218,12 @@ LEASE_MARGIN_FACTOR = 1.25
 # which the operator surface reads back so no capped stage is hidden.
 EXHAUSTED_STAGES_NOTE = "budget exhausted at stages: "
 
+# A stopped model stage has two distinct causes and the run says which: the
+# budget ran out (recorded as the budget_exhausted status plus the note above),
+# or the backend itself was unavailable (this note, with nothing exhausted).
+MODEL_UNAVAILABLE_NOTE = ("model stages stopped: the model backend is"
+                          " unavailable, not the rows; ")
+
 
 def load_config(storage) -> DiscoveryConfig:
     """Config overrides from the instance's discovery.json (optional); unknown
@@ -1002,10 +1008,12 @@ class DiscoveryRunner:
             except BudgetExhausted:
                 return  # exhaustion recorded; the row stays claimable next run
             except ModelUnavailableError as e:
-                self._model_available = False
-                self._notes.append(f"model unavailable; model stages stopped: {e}")
-                self._release_failed(row_id, "model unavailable", run_seq)
-                return
+                # The backend, not the row: the claimed row is left exactly as
+                # it was (no attempt charged, no failure recorded), the same
+                # posture as BudgetExhausted above. Its claim marker is stale
+                # by the next run's higher fence, so it is claimable again.
+                self._stop_model_stages(e)
+                break
             except (ModelCallError, StageOutputError, ValueError, OSError) as e:
                 self._release_failed(row_id, _neutral_reason(e), run_seq)
                 continue
@@ -1090,9 +1098,9 @@ class DiscoveryRunner:
             except BudgetExhausted:
                 return  # exhaustion recorded; the row stays extracted
             except ModelUnavailableError as e:
-                self._model_available = False
-                self._notes.append(f"model unavailable; model stages stopped: {e}")
-                self._release_failed(row_id, "model unavailable", run_seq)
+                # Same posture as extraction: the row keeps its attempt count
+                # and its state; only the backend failed.
+                self._stop_model_stages(e)
                 return
             except (ModelCallError, StageOutputError, ValueError, OSError) as e:
                 self._release_failed(row_id, _neutral_reason(e), run_seq)
@@ -1124,6 +1132,13 @@ class DiscoveryRunner:
                 atomic_queue.transition(row_id, "judged")
 
             self._fenced_write(record_judgment)
+
+    def _stop_model_stages(self, error: ModelUnavailableError) -> None:
+        """Both model stages stand down for the rest of the run: nothing
+        further is charged, no row is blamed. The note names the condition and
+        its provider status, which is our own and the provider's metadata."""
+        self._model_available = False
+        self._notes.append(MODEL_UNAVAILABLE_NOTE + _diagnostic(error))
 
     def _claim_row(self, row_id: str, epoch: int):
         """Exclusive fenced claim (§4): the durable claimed marker lands by
@@ -1224,17 +1239,36 @@ def _persisted_failure_message(error: BaseException) -> str:
     recorded by type alone, which is still enough to tell a transient
     infrastructure blip (`database is locked`) from a bug."""
     if isinstance(error, ModelCallError):
-        return "model call failed operationally"
+        return "model call failed operationally " + _diagnostic(error)
     if isinstance(error, _MESSAGE_SAFE_ERRORS):
         return str(error)[:_FAILURE_MESSAGE_MAX]
     return ("message withheld: this error type may carry fetched content;"
-            " see the operator log for the traceback")
+            " the record's error_type and stage are the diagnostic")
 
 
 def _failure_summary(error: BaseException) -> str:
     """Type and safe message, for the run note beside the persisted failure
     record."""
     return f"{type(error).__name__}: {_persisted_failure_message(error)}"
+
+
+def _diagnostic(error: BaseException) -> str:
+    """The bounded diagnostic a failure record carries: the error class we
+    raised and the provider's own HTTP status where the envelope reported one.
+    Both are our metadata and the provider's, never anything derived from a
+    fetched posting, so the OC-13 neutrality rule (which governs
+    posting-derived text) applies to nothing here and stays intact. Without
+    this an operator sees only 'failed operationally' and has to probe the CLI
+    by hand to learn it was a quota error.
+
+    Bounded at this boundary, not only where the envelope is parsed: anything
+    that is not a plain HTTP status reads as unknown, so no caller can widen
+    what gets written."""
+    status = getattr(error, "provider_status", None)
+    known = (isinstance(status, int) and not isinstance(status, bool)
+             and 100 <= status <= 599)
+    suffix = f", provider status {status}" if known else ""
+    return f"[{type(error).__name__}{suffix}]"
 
 
 def _neutral_reason(error) -> str:
@@ -1244,7 +1278,7 @@ def _neutral_reason(error) -> str:
     if isinstance(error, StageOutputError):
         return f"output failed validation: {error}"
     if isinstance(error, ModelCallError):
-        return "model call failed operationally"
+        return "model call failed operationally " + _diagnostic(error)
     if isinstance(error, OSError):
         # OS-written message (errno plus a path we minted), never posting text.
         return f"stored payload unreadable: {error}"
