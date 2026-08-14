@@ -126,7 +126,7 @@ def test_judgment_prompt_placeholders_inside_posting_data_stay_literal():
     posting_json = build_posting_json(title="Engineer",
                                       description=INJECTION_PLACEHOLDERS)
     prompt = render_judgment_prompt(
-        template, posting_json, ("Python",), {"capabilities": ["python"]})
+        template, posting_json, ("Python",), {"target_families": [{"name": "Python"}]})
     # The posting travels unmodified: its fenced block must parse back to the
     # exact payload, hostile placeholder tokens still literal.
     first_fence = prompt.split("```json\n", 1)[1].split("\n```", 1)[0]
@@ -140,5 +140,5 @@ def test_judgment_prompt_outside_fences_matches_the_template_for_benign_postings
     template = load_prompt("judged_fit.md")
     posting_json = build_posting_json(title="Engineer", description="Python and SQL.")
     prompt = render_judgment_prompt(
-        template, posting_json, ("Python",), {"capabilities": ["python"]})
+        template, posting_json, ("Python",), {"target_families": [{"name": "Python"}]})
     assert _outside_fences(prompt) == _outside_fences(template)

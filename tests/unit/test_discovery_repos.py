@@ -5,6 +5,7 @@ queue lifecycle, and the dependency epoch."""
 
 import json
 import sqlite3
+import threading
 
 import pytest
 
@@ -430,6 +431,43 @@ def test_families_fingerprint_bumps_the_epoch_only_when_it_changes(repos):
     assert repos["epoch"].sync_families_fingerprint("abc") == 1
     assert repos["epoch"].sync_families_fingerprint("def") == 2
     assert repos["epoch"].current() == 2
+
+
+def test_concurrent_sync_of_the_same_fingerprint_bumps_the_epoch_once(tmp_path):
+    """Codex r5: the compare has to happen inside the write transaction. With
+    the comparison in a preceding SELECT, pysqlite's implicit transaction had
+    not begun yet, so two connections could both read the old fingerprint and
+    both bump, costing a redundant stale sweep. Two connections racing on the
+    SAME fingerprint must leave exactly one bump."""
+    db = tmp_path / "race.sqlite3"
+    migrate(db)
+    barrier = threading.Barrier(2)
+    results, errors = [], []
+
+    def sync():
+        connection = sqlite3.connect(db, timeout=10)
+        try:
+            repo = SqliteDependencyEpochRepository(connection)
+            barrier.wait()
+            results.append(repo.sync_families_fingerprint("same"))
+        except Exception as e:  # surfaced, never swallowed into a passing test
+            errors.append(e)
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=sync) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert results == [1, 1]
+    reader = sqlite3.connect(db)
+    try:
+        assert reader.execute(
+            "SELECT epoch FROM dependency_epoch WHERE id = 1").fetchone()[0] == 1
+    finally:
+        reader.close()
 
 
 def test_abandoned_run_row_is_reconciled_but_a_live_one_is_never_touched(conn, repos):

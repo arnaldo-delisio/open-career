@@ -323,7 +323,7 @@ def stopword_free_tokens(text: str) -> frozenset[str]:
     return normalized_tokens(text) - VOCABULARY_STOPWORDS
 
 
-def capability_matches(requirement: str, vocabulary: list,
+def vocabulary_matches(requirement: str, vocabulary: list,
                        threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
     """The target-family vocabulary terms matching one requirement phrase: at
     least `threshold_bp` of the term's content tokens present in the phrase's
@@ -348,9 +348,11 @@ def capability_matches(requirement: str, vocabulary: list,
 def matched_requirements(requirements: tuple, vocabulary: list,
                          threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
     """Requirements matched by at least one vocabulary term (normalized token
-    match on content tokens, at the calibrated fraction threshold)."""
+    match on content tokens: terms of SHORT_TERM_MAX_CONTENT_TOKENS or fewer
+    content tokens must match in full, and only longer terms use the
+    calibrated fraction threshold)."""
     return [requirement for requirement in requirements
-            if capability_matches(requirement, vocabulary, threshold_bp)]
+            if vocabulary_matches(requirement, vocabulary, threshold_bp)]
 
 
 def coverage_bp(requirements: tuple, vocabulary: list,

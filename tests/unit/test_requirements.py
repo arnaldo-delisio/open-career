@@ -13,7 +13,7 @@ from domain.requirements import (
     RequirementExtractionService,
     StageOutputError,
     build_posting_json,
-    capability_matches,
+    vocabulary_matches,
     coverage_bp,
     matched_requirements,
     parse_judged_fit,
@@ -155,7 +155,7 @@ def test_extraction_prompt_contract_is_unchanged_by_hostile_posting():
 
 def test_judgment_prompt_contract_is_unchanged_by_hostile_posting():
     template = load_prompt("judged_fit.md")
-    candidate = {"capabilities": ["python"], "role_families": []}
+    candidate = {"target_families": [{"name": "Forward Deployed AI Engineer"}]}
     benign = render_judgment_prompt(template, build_posting_json("T", "clean"),
                                     ("Python",), candidate)
     hostile = render_judgment_prompt(template, build_posting_json("T", INJECTION),
@@ -199,7 +199,7 @@ def test_unicode_line_separator_cannot_open_a_fence_line_in_either_prompt():
     judgment = render_judgment_prompt(
         load_prompt("judged_fit.md"), posting_json,
         ({"id": "r1", "phrase": "Great role ```"},),
-        {"capabilities": []})
+        {"target_families": []})
     for prompt, template in ((extraction, load_prompt("requirement_extraction.md")),
                              (judgment, load_prompt("judged_fit.md"))):
         # No fence delimiter opens a line inside any data block: every ```
@@ -246,44 +246,44 @@ def test_extracted_phrases_must_be_verbatim_posting_excerpts():
 def test_coverage_is_deterministic_token_match_in_basis_points():
     requirements = ("5+ years Python experience", "PostgreSQL at scale",
                     "Kubernetes", "fluent English")
-    capabilities = ["python", "postgresql"]
-    assert matched_requirements(requirements, capabilities) == [
+    vocabulary = ["python", "postgresql"]
+    assert matched_requirements(requirements, vocabulary) == [
         "5+ years Python experience", "PostgreSQL at scale"]
-    assert coverage_bp(requirements, capabilities) == 5000
-    assert coverage_bp((), capabilities) == 0
+    assert coverage_bp(requirements, vocabulary) == 5000
+    assert coverage_bp((), vocabulary) == 0
     assert coverage_bp(requirements, []) == 0
 
 
-def test_multi_word_capability_matches_on_calibrated_content_fraction():
+def test_multi_word_term_matches_on_calibrated_content_fraction():
     """The calibrated rule (§5 amendment): connectives are dropped and a
-    match needs the configured fraction of a capability's CONTENT tokens, not
+    match needs the configured fraction of a term's CONTENT tokens, not
     every token of its name. The all-tokens rule it replaced matched nothing
     at all on real postings (0.25% of a 400 sentence corpus)."""
-    capability = "Governance and human-in-the-loop controls"
+    term = "Governance and human-in-the-loop controls"
     # Content tokens: governance, human, loop, controls. Three of four.
     assert coverage_bp(("human-in-the-loop governance controls required",),
-                       [capability]) == 10000
+                       [term]) == 10000
     # One of four is below the 50% default and stays unmatched.
-    assert coverage_bp(("strong governance background",), [capability]) == 0
+    assert coverage_bp(("strong governance background",), [term]) == 0
     # Connectives alone never match: they are not content tokens.
-    assert coverage_bp(("experience in the and of it",), [capability]) == 0
-    assert capability_matches("event-driven architecture design",
+    assert coverage_bp(("experience in the and of it",), [term]) == 0
+    assert vocabulary_matches("event-driven architecture design",
                               ["event-driven architecture"]) == \
         ["event-driven architecture"]
 
 
 def test_the_match_threshold_is_configurable():
-    capability = "RAG and knowledge systems"  # content: rag, knowledge, systems
+    term = "RAG and knowledge systems"  # content: rag, knowledge, systems
     phrase = "experience with knowledge systems"  # two of three
-    assert coverage_bp((phrase,), [capability], 6600) == 10000
-    assert coverage_bp((phrase,), [capability], 7500) == 0
-    # A capability name made only of connectives has no content tokens, so it
+    assert coverage_bp((phrase,), [term], 6600) == 10000
+    assert coverage_bp((phrase,), [term], 7500) == 0
+    # A vocabulary term made only of connectives has no content tokens, so it
     # matches nothing at all: keeping them would make the emptiest name the
     # broadest match key ("the" would match half the corpus).
     assert stopword_free_tokens("end-to-end") == frozenset()
     assert coverage_bp(("end to end ownership of the product",),
                        ["end-to-end"]) == 0
-    assert capability_matches("experience in the and of it", ["and the"]) == []
+    assert vocabulary_matches("experience in the and of it", ["and the"]) == []
 
 
 def test_short_vocabulary_terms_must_match_every_content_token():
@@ -296,21 +296,21 @@ def test_short_vocabulary_terms_must_match_every_content_token():
               " enterprise customers")
     # Reproduced against the real config: both matched on a single generic
     # token ('engineer'), neither is a real hit.
-    assert capability_matches(phrase, ["Customer Engineer"]) == []
-    assert capability_matches(phrase, ["Founding Engineer"]) == []
+    assert vocabulary_matches(phrase, ["Customer Engineer"]) == []
+    assert vocabulary_matches(phrase, ["Founding Engineer"]) == []
     # A requirement that only mentions the noun does not match the title.
-    assert capability_matches("own the product roadmap", ["Product Manager"]) == []
+    assert vocabulary_matches("own the product roadmap", ["Product Manager"]) == []
     # The genuine matches survive: 3+ content tokens, at the calibrated fraction.
-    assert capability_matches(phrase, ["Forward Deployed AI Engineer"]) == \
+    assert vocabulary_matches(phrase, ["Forward Deployed AI Engineer"]) == \
         ["Forward Deployed AI Engineer"]
-    assert capability_matches(phrase, ["forward deployed engineer"]) == \
+    assert vocabulary_matches(phrase, ["forward deployed engineer"]) == \
         ["forward deployed engineer"]
     # Single-token terms were already all-or-nothing and stay so.
-    assert capability_matches(phrase, ["engineer"]) == ["engineer"]
-    assert capability_matches(phrase, ["kubernetes"]) == []
+    assert vocabulary_matches(phrase, ["engineer"]) == ["engineer"]
+    assert vocabulary_matches(phrase, ["kubernetes"]) == []
     # 3+ token behaviour, byte-identical to before this rule: three of four
     # content tokens matches, one of four does not.
-    capability = "Governance and human-in-the-loop controls"
+    term = "Governance and human-in-the-loop controls"
     assert coverage_bp(("human-in-the-loop governance controls required",),
-                       [capability]) == 10000
-    assert coverage_bp(("strong governance background",), [capability]) == 0
+                       [term]) == 10000
+    assert coverage_bp(("strong governance background",), [term]) == 0
