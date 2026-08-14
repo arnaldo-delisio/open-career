@@ -155,7 +155,7 @@ def test_extraction_prompt_contract_is_unchanged_by_hostile_posting():
 
 def test_judgment_prompt_contract_is_unchanged_by_hostile_posting():
     template = load_prompt("judged_fit.md")
-    candidate = {"target_families": [{"name": "Forward Deployed AI Engineer"}]}
+    candidate = {"target_families": [{"name": "Field Deployed Data Specialist"}]}
     benign = render_judgment_prompt(template, build_posting_json("T", "clean"),
                                     ("Python",), candidate)
     hostile = render_judgment_prompt(template, build_posting_json("T", INJECTION),
@@ -292,21 +292,21 @@ def test_short_vocabulary_terms_must_match_every_content_token():
     calibrated fraction matched them on 'engineer' alone and inflated
     coverage. Short terms match in full or not at all; 3+ token terms keep the
     calibrated fraction, unchanged."""
-    phrase = ("Experience as a forward deployed engineer working with"
-              " enterprise customers")
+    phrase = ("Experience as a field deployed specialist working with"
+              " enterprise clients")
     # Reproduced against the real config: both matched on a single generic
-    # token ('engineer'), neither is a real hit.
-    assert vocabulary_matches(phrase, ["Customer Engineer"]) == []
-    assert vocabulary_matches(phrase, ["Founding Engineer"]) == []
+    # token ('specialist'), neither is a real hit.
+    assert vocabulary_matches(phrase, ["Client Specialist"]) == []
+    assert vocabulary_matches(phrase, ["Founding Specialist"]) == []
     # A requirement that only mentions the noun does not match the title.
     assert vocabulary_matches("own the product roadmap", ["Product Manager"]) == []
     # The genuine matches survive: 3+ content tokens, at the calibrated fraction.
-    assert vocabulary_matches(phrase, ["Forward Deployed AI Engineer"]) == \
-        ["Forward Deployed AI Engineer"]
-    assert vocabulary_matches(phrase, ["forward deployed engineer"]) == \
-        ["forward deployed engineer"]
+    assert vocabulary_matches(phrase, ["Field Deployed Data Specialist"]) == \
+        ["Field Deployed Data Specialist"]
+    assert vocabulary_matches(phrase, ["field deployed specialist"]) == \
+        ["field deployed specialist"]
     # Single-token terms were already all-or-nothing and stay so.
-    assert vocabulary_matches(phrase, ["engineer"]) == ["engineer"]
+    assert vocabulary_matches(phrase, ["specialist"]) == ["specialist"]
     assert vocabulary_matches(phrase, ["kubernetes"]) == []
     # 3+ token behaviour, byte-identical to before this rule: three of four
     # content tokens matches, one of four does not.

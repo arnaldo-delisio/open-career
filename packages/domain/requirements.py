@@ -300,10 +300,10 @@ CONTENT_FRACTION_BP = 5000
 # Below this many content tokens, a term must match in FULL rather than at the
 # fraction above. The threshold was calibrated on capability names, which are
 # long and specific; since OC-42 the vocabulary also carries family names and
-# adjacent titles ("Customer Engineer", "Product Manager"), and those are short
+# adjacent titles ("Client Specialist", "Product Manager"), and those are short
 # labels built almost entirely of generic words. At 5000bp a two-token title
-# matches on either half alone, so "Customer Engineer" scores a hit on any
-# requirement containing "engineer" and coverage inflates on ordinary words.
+# matches on either half alone, so "Client Specialist" scores a hit on any
+# requirement containing "specialist" and coverage inflates on ordinary words.
 # Requiring every content token of a short term keeps them honest, and leaves
 # the calibrated fraction untouched for the 3+ token terms it was measured on.
 SHORT_TERM_MAX_CONTENT_TOKENS = 2
