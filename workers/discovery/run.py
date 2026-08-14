@@ -1065,13 +1065,18 @@ class DiscoveryRunner:
                 # it needs no second invalidation path.
                 opps.set_proposed_action(
                     opportunity_id, "ignore", version_id=version.id,
-                    epoch=epoch,
-                    reason="gate passed but no target-family term matched the"
-                           " title; not promoted to the model stages")
+                    epoch=epoch)
+                opps.set_promotion_skip_reason(
+                    opportunity_id,
+                    "gate passed but no target-family term matched the title;"
+                    " not promoted to the model stages")
                 return
             # OC-23: the proposal defaults to MONITOR; nothing here pursues.
             opps.set_proposed_action(opportunity_id, "monitor",
                                      version_id=version.id, epoch=epoch)
+            # This gate decision re-decided promotion, so any skip recorded by
+            # an earlier one is history, not state.
+            opps.set_promotion_skip_reason(opportunity_id, None)
             queue.enqueue(
                 opportunity_id, version.id, lane_rank(source.origin),
                 opps.get(opportunity_id).first_seen, epoch,
@@ -1079,6 +1084,10 @@ class DiscoveryRunner:
         else:
             opps.set_proposed_action(opportunity_id, "ignore",
                                      version_id=version.id, epoch=epoch)
+            # A gated-out row is excluded, not skipped for promotion: the
+            # verdict record carries the reason, so the skip field must not
+            # keep an older one alongside it.
+            opps.set_promotion_skip_reason(opportunity_id, None)
 
     def _gate_context(self) -> GateContext:
         policies = SqliteUserPolicyRepository(self._conn).get_policies()

@@ -130,6 +130,10 @@ class Opportunity:
     human_action: str | None = None
     backlog_state: BacklogState = "pending"
     backlog_discard_reason: str | None = None
+    # Why a gate-passing opportunity earned no paid model call (§4 promotion);
+    # separate from the backlog discard reason above, which is about leaving
+    # the observed-ungated backlog.
+    promotion_skip_reason: str | None = None
     requirement_proposals_json: str | None = None
     judged_fit_json: str | None = None
     created_at: str | None = None

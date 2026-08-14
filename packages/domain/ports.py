@@ -482,12 +482,16 @@ class OpportunityRepository(ABC):
     @abstractmethod
     def set_proposed_action(self, opportunity_id: str, action: str,
                             version_id: str | None = None,
-                            epoch: int | None = None,
-                            reason: str | None = None) -> None:
+                            epoch: int | None = None) -> None:
         """Persist the machine proposal with its version and epoch pin;
-        readers must never present a stale-pinned proposal as current. reason
-        records why the opportunity went no further (backlog_discard_reason)
-        and is cleared when none is given."""
+        readers must never present a stale-pinned proposal as current."""
+
+    @abstractmethod
+    def set_promotion_skip_reason(self, opportunity_id: str,
+                                  reason: str | None) -> None:
+        """Why a gate-passing opportunity was not promoted to the paid model
+        stages, or None when it is not being skipped; cleared on any gate
+        decision that re-decides the question."""
 
     @abstractmethod
     def set_human_action(self, opportunity_id: str, action: str | None) -> None: ...

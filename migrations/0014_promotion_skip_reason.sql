@@ -1,0 +1,13 @@
+-- Why a gate-PASSING opportunity was not promoted to the paid model stages.
+--
+-- 0013 gave the title-relevance skip no field of its own, so it borrowed
+-- backlog_discard_reason. That column means "why this observation LEFT the
+-- observed-ungated backlog" and pairs with backlog_state = 'discarded'; a
+-- skipped row is backlog_state = 'gated' and still very much in play, so
+-- writing the skip there makes the state record contradict itself and forced
+-- set_proposed_action to clear a backlog column on every proposal write.
+--
+-- The skip is a different fact with a different lifetime: it is set when a
+-- pass earns no model call, and cleared the moment the row is enqueued or
+-- gated out, both of which re-decide the question from scratch.
+ALTER TABLE opportunities ADD COLUMN promotion_skip_reason TEXT;

@@ -345,3 +345,17 @@ def test_title_relevance_keeps_the_short_term_full_match_rule():
     # 3+ token terms keep the calibrated fraction, untouched.
     assert title_relevance_score("Lead Data Platform Engineer",
                                  ["Data Platform Reliability Engineer"]) == 1
+
+
+def test_title_relevance_counts_a_normalized_duplicate_term_once():
+    """Two spellings of one term are one term to this matcher, so counting the
+    raw match list would make scores incomparable across a vocabulary edit
+    that only added a spelling."""
+    duplicates = ["Data Platform Engineer", "data-platform-engineer",
+                  "Data  Platform  Engineer"]
+    assert title_relevance_score("Senior Data Platform Engineer",
+                                 duplicates) == 1
+    # Nested terms stay independent signals: matching a broad AND a specific
+    # term is more target-family evidence than matching the broad one alone.
+    assert title_relevance_score("Senior Data Platform Engineer",
+                                 ["Engineer", "Data Platform Engineer"]) == 2

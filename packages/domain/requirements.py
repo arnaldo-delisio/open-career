@@ -362,7 +362,17 @@ def title_relevance_score(title: str | None, vocabulary: list,
     resulting integer, not the vocabulary."""
     if not title:
         return 0
-    return len(vocabulary_matches(title, vocabulary, threshold_bp))
+    # Counted by normalized content-token signature, not by raw string: two
+    # spellings of one term ("Data Engineer", "data-engineer") are the same
+    # term to this matcher, and letting each score a point would make the
+    # numbers incomparable across vocabulary edits that only add a spelling.
+    #
+    # Nested terms are deliberately NOT collapsed: a title matching both
+    # "Engineer" and "Data Engineer" carries more target-family signal than
+    # one matching "Engineer" alone, and this score exists to rank exactly
+    # that. Please do not "fix" it into an overlap-group count.
+    return len({stopword_free_tokens(name) for name
+                in vocabulary_matches(title, vocabulary, threshold_bp)})
 
 
 def matched_requirements(requirements: tuple, vocabulary: list,

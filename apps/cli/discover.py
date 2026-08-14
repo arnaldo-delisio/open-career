@@ -474,7 +474,11 @@ def run_opportunities(conn, say, as_json: bool = False,
         say(f"{o.id}  {o.availability}  {_quoted_title(conn, o)}"
             f"  gate={_gate_state(conn, o, epoch)}"
             f"  proposed={_proposed_label(o, epoch)}"
-            f"  apply={o.apply_support}")
+            f"  apply={o.apply_support}"
+            # A gate-passing row that never reached the model stages looks
+            # identical to a gated-out one without this.
+            + (f"  skipped={o.promotion_skip_reason}"
+               if o.promotion_skip_reason else ""))
 
 
 def _quoted_title(conn, opportunity) -> str:
@@ -502,6 +506,7 @@ def _opportunity_row(conn, o) -> dict:
         "gate": _gate_state(conn, o, _current_epoch(conn)),
         "proposed_action": o.proposed_action,
         "proposed_action_stale": _proposed_action_stale(o, _current_epoch(conn)),
+        "promotion_skip_reason": o.promotion_skip_reason,
         "human_action": o.human_action,
         "apply_support": o.apply_support,
         "first_seen": o.first_seen, "last_seen": o.last_seen,

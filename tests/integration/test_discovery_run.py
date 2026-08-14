@@ -13,7 +13,7 @@ from adapters.sources.greenhouse import GreenhouseAdapter
 from adapters.sources.http import HttpFetcher
 from adapters.sources.smartrecruiters import SmartRecruitersAdapter
 from adapters.storage.local import LocalStorageAdapter
-from adapters.storage.migrations import migrate
+from adapters.storage.migrations import MIGRATIONS_DIR, migrate
 from adapters.storage.sqlite_discovery import (
     SqliteDependencyEpochRepository,
     SqliteDiscoveryLease,
@@ -36,6 +36,8 @@ from workers.discovery.run import (
     EXHAUSTED_STAGES_NOTE,
     DiscoveryConfig,
     DiscoveryRunner,
+    families_fingerprint,
+    load_families,
     run_discovery,
 )
 
@@ -2215,8 +2217,12 @@ def test_relevance_decides_promotion_without_touching_the_gate_verdict(instance)
 
     # The non-promoted row says why, and proposes ignoring rather than pursuing.
     assert off_target.proposed_action == "ignore"
-    assert "title" in off_target.backlog_discard_reason
+    assert "title" in off_target.promotion_skip_reason
     assert on_target.proposed_action == "monitor"
+    assert on_target.promotion_skip_reason is None
+    # The skip has its own field: backlog_discard_reason still means "why this
+    # observation left the backlog", and neither row left it.
+    assert off_target.backlog_discard_reason is None
     assert on_target.backlog_discard_reason is None
 
 
@@ -2257,3 +2263,103 @@ def test_the_relevance_score_is_frozen_at_enqueue_and_stable_across_runs(instanc
     rows = queue.list_rows()
     assert len(rows) == 1
     assert rows[0].id == first.id and rows[0].relevance_score == 2
+
+
+def test_queue_rows_predating_the_relevance_filter_cannot_reach_a_paid_stage(
+        tmp_path):
+    """Migration 0013's own upgrade path. Every queue row enqueued before
+    relevance existed is unscored, and select_for_stage's aging half is
+    relevance-blind by design: it is safe only because zero-relevance rows
+    never enter the queue. A legacy backlog left current would therefore walk
+    straight into extraction, which is the defect the filter exists to stop.
+
+    The dangerous case is a database that already ran 0012 in an EARLIER run:
+    families.json is unchanged, so sync_families_fingerprint does not bump and
+    nothing else makes those rows stale. 0013 advances the epoch itself, so
+    the existing sweep supersedes them and the re-gate re-scores them first."""
+    db = tmp_path / "open-career.sqlite3"
+    # Stop one migration short of 0013: the state a database left by an
+    # earlier release is in.
+    partial = tmp_path / "migrations-0012"
+    partial.mkdir()
+    for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.sql")):
+        if path.name.split("_")[0] > "0012":
+            break
+        (partial / path.name).write_text(path.read_text())
+    migrate(db, migrations_dir=partial)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    storage = LocalStorageAdapter(tmp_path)
+    (tmp_path / "families.json").write_text(json.dumps(FIXTURE_FAMILIES))
+    source = seed_source(conn)
+    # The earlier run synced the fingerprint, so the next run finds it
+    # unchanged and does not bump: nothing but the migration can stale these.
+    epoch_repo = SqliteDependencyEpochRepository(conn)
+    legacy_epoch = epoch_repo.sync_families_fingerprint(
+        families_fingerprint(load_families(storage)))
+    _seed_legacy_queue_row(conn, source, legacy_epoch)
+
+    assert migrate(db) == ["0013", "0014"]
+    assert epoch_repo.current() == legacy_epoch + 1  # the legacy row is stale
+
+    # A run over a board that does not carry the legacy posting: it stays open
+    # (one absence is not a closure), so it re-gates on the stale epoch alone.
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(2, "Engineer")))
+    run_once(conn, storage, adapters, config, model)
+
+    assert epoch_repo.current() == legacy_epoch + 1  # unchanged families.json
+    queue = SqlitePromotionQueueRepository(conn)
+    legacy = [r for r in queue.list_rows() if r.id == "pmq_legacy"][0]
+    assert legacy.state == "superseded"
+    assert legacy.attempts == 0  # never claimed, so never paid for
+    assert legacy.relevance_score == 0  # unknown, and it stayed unknown
+
+    # Re-gated and re-scored before anything paid: the replacement row carries
+    # a measured score and is the only one that reached the model stages.
+    replacement = [r for r in queue.list_rows()
+                   if r.opportunity_id == "opp_legacy" and r.id != "pmq_legacy"]
+    assert len(replacement) == 1
+    assert replacement[0].relevance_score == 1  # the adjacent title "Engineer"
+    assert replacement[0].epoch == legacy_epoch + 1
+    conn.close()
+
+
+def _seed_legacy_queue_row(conn, source, epoch: int) -> None:
+    """A gated, queued opportunity as an earlier release left it: no
+    relevance_score column exists yet, so the row is written in raw SQL."""
+    with conn:
+        conn.execute(
+            "INSERT INTO snapshots (id, source_id, seq, raw_locator,"
+            " content_hash, completion_json, posting_count)"
+            " VALUES ('snap_legacy', ?, 1, 'raw/legacy.json', 'hash',"
+            " '{\"pages\": 1}', 1)", (source.id,))
+        conn.execute(
+            "INSERT INTO opportunities (id, source_id, external_job_id,"
+            " first_seen, last_seen, apply_support,"
+            " proposed_action, backlog_state)"
+            " VALUES ('opp_legacy', ?, '1', '2026-01-01T00:00:00Z',"
+            " '2026-01-01T00:00:00Z', 'extension', 'monitor',"
+            " 'gated')", (source.id,))
+        conn.execute(
+            "INSERT INTO opportunity_versions (id, opportunity_id, version,"
+            " snapshot_id, title, fingerprint)"
+            " VALUES ('ver_legacy', 'opp_legacy', 1, 'snap_legacy',"
+            " 'Engineer', 'fp_legacy')")
+        conn.execute(
+            "UPDATE opportunities SET current_version_id = 'ver_legacy'"
+            " WHERE id = 'opp_legacy'")
+        conn.execute(
+            "INSERT INTO gate_verdicts (id, opportunity_id, version_id, epoch,"
+            " verdict, dimensions_json)"
+            " VALUES ('gv_legacy', 'opp_legacy', 'ver_legacy', ?, 'pass',"
+            " '[]')", (epoch,))
+        conn.execute(
+            "UPDATE opportunities SET latest_gate_verdict_id = 'gv_legacy'"
+            " WHERE id = 'opp_legacy'")
+        conn.execute(
+            "INSERT INTO promotion_queue (id, opportunity_id, version_id,"
+            " lane_rank, first_seen, enqueue_seq, epoch)"
+            " VALUES ('pmq_legacy', 'opp_legacy', 'ver_legacy', 0,"
+            " '2026-01-01T00:00:00Z', 1, ?)", (epoch,))

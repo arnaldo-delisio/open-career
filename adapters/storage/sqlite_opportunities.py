@@ -25,7 +25,8 @@ _OPP_COLUMNS = (
     " closing_snapshot_ids_json, reopen_count, current_version_id,"
     " latest_gate_verdict_id, proposed_action, proposed_action_version_id,"
     " proposed_action_epoch, human_action, backlog_state,"
-    " backlog_discard_reason, requirement_proposals_json, judged_fit_json,"
+    " backlog_discard_reason, promotion_skip_reason,"
+    " requirement_proposals_json, judged_fit_json,"
     " created_at, updated_at"
 )
 
@@ -211,23 +212,29 @@ class SqliteOpportunityRepository(OpportunityRepository):
 
     def set_proposed_action(self, opportunity_id: str, action: str,
                             version_id: str | None = None,
-                            epoch: int | None = None,
-                            reason: str | None = None) -> None:
+                            epoch: int | None = None) -> None:
         """The proposal lands with its version and epoch pin, so readers can
-        tell a current proposal from one derived under superseded inputs.
-
-        reason is the existing backlog_discard_reason field: the one auditable
-        place this schema keeps "why this opportunity went no further". It is
-        written on every proposal, so a row that stops being ignored has its
-        stale reason cleared in the same write rather than keeping it."""
+        tell a current proposal from one derived under superseded inputs."""
         if action not in ("ignore", "monitor", "pursue"):
             raise ValueError(f"unknown proposed action '{action}'")
         with self._conn:
             self._conn.execute(
                 "UPDATE opportunities SET proposed_action = ?,"
                 " proposed_action_version_id = ?, proposed_action_epoch = ?,"
-                f" backlog_discard_reason = ?, {_TOUCH} WHERE id = ?",
-                (action, version_id, epoch, reason, opportunity_id))
+                f" {_TOUCH} WHERE id = ?",
+                (action, version_id, epoch, opportunity_id))
+
+    def set_promotion_skip_reason(self, opportunity_id: str,
+                                  reason: str | None) -> None:
+        """Why a gate-PASSING opportunity earned no paid model call, or None
+        when it is not being skipped. Written on every gate decision, so a row
+        that stops being skipped loses the stale reason in the same pass;
+        distinct from backlog_discard_reason, which says why an observation
+        left the backlog and belongs to backlog_state = 'discarded'."""
+        with self._conn:
+            self._conn.execute(
+                f"UPDATE opportunities SET promotion_skip_reason = ?, {_TOUCH}"
+                " WHERE id = ?", (reason, opportunity_id))
 
     def set_human_action(self, opportunity_id: str, action: str | None) -> None:
         with self._conn:

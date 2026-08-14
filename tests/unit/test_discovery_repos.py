@@ -416,10 +416,13 @@ def test_unknown_terminal_run_status_is_rejected(repos):
         repos["runs"].finish(run.id, "done", "{}", "{}")
 
 
-def test_dependency_epoch_starts_at_zero_and_bumps(repos):
-    assert repos["epoch"].current() == 0
-    assert repos["epoch"].bump() == 1
+def test_dependency_epoch_bumps_by_one(repos):
+    # A migrated database starts at 1, not 0: 0006 seeds the row at 0 and 0013
+    # advances it once so queue rows enqueued before title relevance existed
+    # are stale on arrival.
+    assert repos["epoch"].current() == 1
     assert repos["epoch"].bump() == 2
+    assert repos["epoch"].bump() == 3
 
 
 def test_families_fingerprint_bumps_the_epoch_only_when_it_changes(repos):
@@ -427,10 +430,11 @@ def test_families_fingerprint_bumps_the_epoch_only_when_it_changes(repos):
     and no repository write announces an edit, so the run compares the
     fingerprint. The unrecorded (NULL) fingerprint counts as a change, which
     re-gates once on the first run after migration 0012."""
-    assert repos["epoch"].sync_families_fingerprint("abc") == 1
-    assert repos["epoch"].sync_families_fingerprint("abc") == 1
-    assert repos["epoch"].sync_families_fingerprint("def") == 2
-    assert repos["epoch"].current() == 2
+    base = repos["epoch"].current()  # 1 after migration 0013's own bump
+    assert repos["epoch"].sync_families_fingerprint("abc") == base + 1
+    assert repos["epoch"].sync_families_fingerprint("abc") == base + 1
+    assert repos["epoch"].sync_families_fingerprint("def") == base + 2
+    assert repos["epoch"].current() == base + 2
 
 
 def test_concurrent_sync_of_the_same_fingerprint_bumps_the_epoch_once(tmp_path):
@@ -471,11 +475,11 @@ def test_concurrent_sync_of_the_same_fingerprint_bumps_the_epoch_once(tmp_path):
     for t in threads:
         t.join()
     assert errors == []
-    assert results == [1, 1]
+    assert results == [2, 2]  # one bump on top of migration 0013's own
     reader = sqlite3.connect(db)
     try:
         assert reader.execute(
-            "SELECT epoch FROM dependency_epoch WHERE id = 1").fetchone()[0] == 1
+            "SELECT epoch FROM dependency_epoch WHERE id = 1").fetchone()[0] == 2
     finally:
         reader.close()
 
