@@ -89,6 +89,22 @@ class ClaudeCodeAdapter(ModelAdapter):
                 self._run or subprocess.run, self._command)
         return self._provider_version
 
+    def _backend_unavailable_error(self, envelope) -> ModelUnavailableError | None:
+        """The one classification both exit paths share: a backend condition in
+        the envelope becomes ModelUnavailableError, anything else stays the
+        caller's per-row error. The message names the status only: the
+        envelope's `result` field is provider prose and never travels into a
+        persisted record."""
+        status = _provider_status(envelope)
+        if not is_backend_unavailable(status):
+            return None
+        error = ModelUnavailableError(
+            f"'{self._command}' reported provider status {status}"
+            " (subscription limit, authentication, or permission);"
+            " the backend is unavailable, not this input")
+        error.provider_status = status
+        return error
+
     def _complete_envelope(self, prompt: str) -> dict:
         run = self._run or subprocess.run
         try:
@@ -111,6 +127,19 @@ class ClaudeCodeAdapter(ModelAdapter):
         except OSError as e:  # PermissionError and other spawn failures
             raise ModelCallError(f"'{self._command}' could not run: {e}") from e
         if proc.returncode != 0:
+            # A spent quota exits NON-zero with a well-formed envelope (observed
+            # live: rc=1, "terminal_reason":"api_error", "api_error_status":429),
+            # so the envelope is classified BEFORE the exit code is reported.
+            # Otherwise an unavailable backend reads as a bad row and burns the
+            # budget and the queue's attempts, exactly what
+            # BACKEND_UNAVAILABLE_STATUSES exists to prevent.
+            try:
+                envelope = json.loads(proc.stdout)
+            except (json.JSONDecodeError, TypeError):
+                envelope = None
+            error = self._backend_unavailable_error(envelope)
+            if error is not None:
+                raise error
             raise ModelCallError(
                 f"'{self._command}' exited {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}")
         try:
@@ -119,15 +148,8 @@ class ClaudeCodeAdapter(ModelAdapter):
             raise ModelCallError(f"'{self._command}' emitted invalid JSON envelope: {e}") from e
         if not isinstance(envelope, dict) or envelope.get("is_error") or "result" not in envelope:
             status = _provider_status(envelope)
-            if is_backend_unavailable(status):
-                # A backend that is unavailable is not a bad row. The message
-                # names the status only: the envelope's `result` field is
-                # provider prose and never travels into a persisted record.
-                error = ModelUnavailableError(
-                    f"'{self._command}' reported provider status {status}"
-                    " (subscription limit, authentication, or permission);"
-                    " the backend is unavailable, not this input")
-                error.provider_status = status
+            error = self._backend_unavailable_error(envelope)
+            if error is not None:
                 raise error
             raise ModelCallError(
                 f"'{self._command}' reported an error: {envelope}",

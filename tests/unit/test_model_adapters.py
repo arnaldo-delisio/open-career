@@ -311,6 +311,35 @@ def test_a_row_shaped_envelope_error_stays_a_per_row_model_call_error():
     assert excinfo.value.provider_status == 400
 
 
+@pytest.mark.parametrize("status", [401, 403, 429, 503])
+def test_a_nonzero_exit_with_a_backend_envelope_raises_model_unavailable(status):
+    """Observed live: a spent subscription exits 1 AND writes the envelope, so
+    the exit code alone must not demote a backend condition to a bad row
+    (12 extraction calls charged, 12 innocent queue rows given an attempt)."""
+    adapter = ClaudeCodeAdapter(
+        run=lambda *a, **k: FakeProc(_quota_envelope(status), returncode=1))
+    with pytest.raises(ModelUnavailableError) as excinfo:
+        adapter.complete("p")
+    assert excinfo.value.provider_status == status
+    assert "Fable 5 limit" not in str(excinfo.value)
+
+
+def test_a_nonzero_exit_with_a_row_shaped_envelope_stays_a_model_call_error():
+    adapter = ClaudeCodeAdapter(
+        run=lambda *a, **k: FakeProc(_quota_envelope(400), returncode=1))
+    with pytest.raises(ModelCallError) as excinfo:
+        adapter.complete("p")
+    assert "exited 1" in str(excinfo.value)
+
+
+def test_a_nonzero_exit_without_a_json_envelope_is_unchanged():
+    adapter = ClaudeCodeAdapter(
+        run=lambda *a, **k: FakeProc("not json", returncode=2, stderr="boom"))
+    with pytest.raises(ModelCallError) as excinfo:
+        adapter.complete("p")
+    assert str(excinfo.value) == "'claude' exited 2: boom"
+
+
 def test_an_out_of_range_provider_status_is_unknown_not_persisted():
     """The envelope is the CLI's to write and callers persist the status, so
     it is range-bounded here: a hostile or malformed oversized value reads as
