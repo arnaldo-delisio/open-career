@@ -41,7 +41,7 @@ from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from domain.gauntlet import SUITE_VERSION, GauntletRunner, GauntletRunResult
 from domain.gauntlet_invariants import FAIL as FAIL_DISPOSITION
 from domain.gauntlet_judges import JUDGES, PROMPT_FILES
-from domain.generation import CvDraftingService
+from domain.generation import CvDraftingService, build_headline
 from domain.grounding import GroundingVerifier
 from domain.ids import new_id
 from domain.packages import APPROVED, GENERATING, VERIFIED, PackageStateError, PackageVersion
@@ -605,11 +605,15 @@ def _with_bullet_text(cv: CvModel, context: GenerationContext, experience_id: st
             patched.append(CvExperienceEntry(**{**entry.__dict__, "bullets": tuple(bullets)}))
         return tuple(patched)
 
-    # The edited model regenerates under the CURRENT context: meta identity
-    # fields are stamped in code, never carried stale from the old version.
+    # The edited model regenerates under the CURRENT context: the code-stamped
+    # fields come from that context, never carried stale from the old version.
+    # The headline is one of them, so editing a version stored before the
+    # positioning layer existed (headline null) does not produce a new version
+    # missing it; the pipeline re-asserts the same stamp on the way through.
     meta = dataclasses.replace(cv.meta, role_family_id=context.role_family_id,
                                strategy_version=context.strategy.strategy_version)
-    return CvModel(header=cv.header, summary=cv.summary, skills=cv.skills,
+    return CvModel(header=cv.header, headline=build_headline(context),
+                   summary=cv.summary, skills=cv.skills,
                    experiences=patch_entries(cv.experiences),
                    projects=patch_entries(cv.projects),
                    education=patch_entries(cv.education), meta=meta)

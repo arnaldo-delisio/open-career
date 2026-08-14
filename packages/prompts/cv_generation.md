@@ -19,6 +19,8 @@ present in the renderable grounding view):
 ```
 
 Rules:
+- headline: do not write one. The target-role line is typed in code from the
+  role family row; anything you return in that field is discarded.
 - header: copy the profile fields exactly (full_name, email, phone, location;
   links only from the profile URL fields).
 - summary: 2 to 3 sentences naming technical depth and customer-facing
@@ -29,8 +31,10 @@ Rules:
 - experiences/projects/education: reverse chronological from the view's
   experiences (kind project -> projects, education -> education, everything
   else -> experiences). Copy title, org, start_date, end_date exactly from the
-  experience row. Employment entries (the experiences section) appear only if
-  at least one fact attaches. EVERY education and project row in the view must
+  experience row. A role that has not ended has end_date null; never write
+  "Present" or any other word there, the renderer supplies that label.
+  Employment entries (the experiences section) appear only if at least one
+  fact attaches. EVERY education and project row in the view must
   appear in its section; when no fact attaches, render it skeleton-only
   (title, org, dates, empty bullets list).
 - bullets: phrase from the facts (action, what, context, outcome; first-person

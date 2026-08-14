@@ -454,24 +454,33 @@ def test_review_edit_stamps_the_current_strategy_version(env):
     assert meta["generated_at"] != "2026-08-12T00:00:00Z"
 
 
-def test_null_end_date_renders_blank_never_present(env):
-    """A null canonical end date is absence of a value, not a
-    current-employment claim: the extracted PDF text carries no 'Present' or
-    other status text the confirmed row does not state."""
+def test_null_end_date_renders_present_and_no_other_absence_does(env):
+    """OC-41 slice one, which supersedes the earlier rule that a null end date
+    renders blank: a null canonical end date now MEANS the role is ongoing, so
+    the extracted PDF says "Present". The hole this could have opened stays
+    shut, checked in the same run: a null org (a genuinely absent value) still
+    renders nothing, and the stored content model still carries end_date as
+    null, not as the word."""
     from adapters.render.pdftext import PopplerPdfTextExtractor
 
     conn, storage = env
     with conn:
-        conn.execute("UPDATE experiences SET end_date = NULL WHERE id = 'exp_1'")
+        conn.execute("UPDATE experiences SET end_date = NULL, org = NULL"
+                     " WHERE id = 'exp_1'")
     result = package_cmd.run_generate(
         conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
     assert result.status == VERIFIED
     version = SqlitePackageRepository(conn).get_version(result.version_id)
     text = PopplerPdfTextExtractor().extract_layout(
         storage.read_bytes(version.artifact_locator))
-    assert "present" not in text.lower()
-    assert "current" not in text.lower() and "ongoing" not in text.lower()
+    assert "2022-03 - Present" in text
     assert "2022-03" in text  # the confirmed start date still renders
+    entry = json.loads(version.content_model_json)["experiences"][0]
+    assert entry["end_date"] is None and entry["org"] is None
+    # The absent org renders as nothing at all: no placeholder, no label, and
+    # in particular none of the status vocabulary end_date is allowed.
+    assert "none" not in text.lower() and "n/a" not in text.lower()
+    assert text.lower().count("present") == 1
 
 
 def test_cli_export_defaults_to_the_approved_version(env, tmp_path, monkeypatch):
@@ -545,3 +554,29 @@ def test_context_strategy_never_mixes_versions(env, monkeypatch):
     context = package_cmd.build_context(conn, "FDE")
     assert context.strategy.strategy_version == 2
     assert context.strategy.allocation == 2  # same version's allocation, never a mix
+
+
+def test_review_edit_of_a_legacy_model_stamps_the_headline(env):
+    """A version stored before the positioning layer existed carries no
+    headline. Editing it must not carry that absence forward: the headline is
+    typed from the current family in the write-back, exactly as the strategy
+    version is."""
+    conn, storage = env
+    result = package_cmd.run_generate(
+        conn, storage, FakeModel([_model_json(conn)]), "FDE", 1, lambda _s: None)
+    repo = SqlitePackageRepository(conn)
+    # Rewrite the stored model into its pre-OC-41 shape: no headline key at
+    # all, which is what a legacy row actually holds.
+    stored = json.loads(repo.get_version(result.version_id).content_model_json)
+    assert stored.pop("headline") == "FDE"
+    with conn:
+        conn.execute("UPDATE package_versions SET content_model_json = ? WHERE id = ?",
+                     (json.dumps(stored, indent=2, sort_keys=True), result.version_id))
+    grounded_edit = ("Reduced onboarding time by 40% for 12 enterprise customers"
+                     " by automating the Python deployment pipeline")
+    answers = iter(["e", "0", grounded_edit])
+    package_cmd.run_review(conn, storage, None, result.version_id, 1,
+                           lambda _p: next(answers), lambda _s: None)
+    versions = repo.list_versions(repo.get_version(result.version_id).package_id)
+    assert len(versions) == 2 and versions[-1].status == VERIFIED
+    assert json.loads(versions[-1].content_model_json)["headline"] == "FDE"

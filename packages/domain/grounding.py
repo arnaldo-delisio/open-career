@@ -103,6 +103,7 @@ class GroundingVerifier:
         findings: list[Finding] = []
         findings.extend(self._check_meta(cv))
         findings.extend(self._check_header(cv))
+        findings.extend(self._check_headline(cv))
         findings.extend(self._check_summary(cv))
         findings.extend(self._check_skills(cv))
         for section, entries in (("experiences", cv.experiences),
@@ -158,6 +159,24 @@ class GroundingVerifier:
                                     f"profile link '{missing}' is missing from the header"))
         return findings
 
+    def _check_headline(self, cv: CvModel) -> list[Finding]:
+        """The target-role line is typed in code from the role family row this
+        package targets (OC-41 slice one), so it is either absent or exactly
+        that family's name. This is an equality check against one named
+        canonical value, not a lexical allowlist check: the rest of the
+        strategy block stays as unrenderable as it was, and a headline the
+        model authored cannot survive."""
+        if cv.headline is None:
+            return []
+        canonical = self._context.strategy.family.name
+        if _neq(cv.headline, canonical):
+            return [Finding(
+                "headline", "headline",
+                f"'{cv.headline}' is not the targeted role family's name"
+                f" '{canonical}' (the headline is typed from the family row,"
+                " never drafted)")]
+        return []
+
     def _check_summary(self, cv: CvModel) -> list[Finding]:
         """Summary: numbers, entities, and content words against the whole
         renderable grounding view (never the strategy block)."""
@@ -208,7 +227,11 @@ class GroundingVerifier:
         # Skeleton fields directly against the confirmed canonical row: a
         # valid canonical date needs no repeating fact. Every field is
         # compared unconditionally: null is legal only where the canonical
-        # value is null (an omitted end date must not render as "Present").
+        # value is null, so no absent value can be filled in here. A null
+        # end_date is the one canonical null that MEANS something (ongoing),
+        # and it still compares as null: the renderer, not the model, turns it
+        # into "Present" (domain/cv_sections.display_dates), so a model that
+        # writes that word into end_date fails this check.
         for field, rendered, canonical in (
                 ("title", entry.title, experience["title"]),
                 ("org", entry.org, experience["org"]),

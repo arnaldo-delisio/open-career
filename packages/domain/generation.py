@@ -63,6 +63,14 @@ def build_header(context: GenerationContext) -> CvHeader:
                     location=profile.get("location"), links=links)
 
 
+def build_headline(context: GenerationContext) -> str | None:
+    """The target-role line, typed in code from the role family this package
+    targets (OC-41 slice one). The model never authors it, and a family with
+    no usable name yields no headline rather than an invented one."""
+    name = (context.strategy.family.name or "").strip()
+    return name or None
+
+
 def build_verbatim_model(context: GenerationContext, generated_at: str) -> tuple[CvModel, tuple[str, ...]]:
     """The deterministic fallback: fact statements verbatim, skills from
     covered capabilities, no drafted summary (dropped, gap reported).
@@ -94,7 +102,8 @@ def build_verbatim_model(context: GenerationContext, generated_at: str) -> tuple
     skills = tuple(SkillItem(name=c.name, capability_ids=(c.id,))
                    for c in context.covered_capabilities())
     cv = CvModel(
-        header=build_header(context), summary="", skills=skills,
+        header=build_header(context), headline=build_headline(context),
+        summary="", skills=skills,
         experiences=tuple(sections["experiences"]),
         projects=tuple(sections["projects"]), education=tuple(sections["education"]),
         meta=CvMeta(role_family_id=context.role_family_id,
@@ -136,13 +145,15 @@ class CvDraftingService:
             attempts += 1
             raw = self._model.complete(prompt + failure)
             try:
-                # The header is built in code from user_profile, and the meta
-                # identity fields are stamped from the generation context,
-                # whatever the model returned: contact fields and the strategy
-                # audit trail can be neither omitted nor altered by model
-                # output.
+                # The header is built in code from user_profile, the headline
+                # is typed from the role family row, and the meta identity
+                # fields are stamped from the generation context, whatever the
+                # model returned: contact fields, the target-role line and the
+                # strategy audit trail can be neither omitted nor altered by
+                # model output.
                 cv = parse_cv_model(raw)
                 cv = replace(cv, header=build_header(context),
+                             headline=build_headline(context),
                              meta=replace(cv.meta,
                                           role_family_id=context.role_family_id,
                                           strategy_version=context.strategy.strategy_version,

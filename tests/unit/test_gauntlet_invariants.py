@@ -5,6 +5,7 @@ other Gauntlet test modules reuse."""
 
 import hashlib
 import json
+from dataclasses import replace
 
 from domain.ats_check import check_ats
 from domain.cv_model import Bullet, CvExperienceEntry, CvHeader, CvMeta, CvModel, SkillItem
@@ -35,10 +36,17 @@ FACT = ("Reduced onboarding time by 40% for 12 enterprise customers by"
         " automating the Python deployment pipeline")
 
 
+# The family name the snapshot carries, which the headline is typed from: the
+# shared fixture states it so every reuse of this bundle exercises the
+# equality path instead of the null-headline shortcut.
+FAMILY_NAME = "FDE"
+
+
 def make_cv(bullet_text: str = FACT, summary: str = "") -> CvModel:
     return CvModel(
         header=CvHeader(name=PROFILE["full_name"], email=PROFILE["email"],
                         phone=PROFILE["phone"], location=PROFILE["location"]),
+        headline=FAMILY_NAME,
         summary=summary,
         skills=(SkillItem(name="Python", capability_ids=("cap_1",)),),
         experiences=(CvExperienceEntry(
@@ -68,7 +76,7 @@ def make_snapshot() -> dict:
             "capabilities": {"cap_1": {"name": "Python", "strength": "strong"}},
         },
         "strategy": {"strategy_version": 1, "objective": "o", "allocation": 5,
-                     "family": {"id": "rf_1", "name": "FDE"}},
+                     "family": {"id": "rf_1", "name": FAMILY_NAME}},
     }
 
 
@@ -615,3 +623,80 @@ def test_an_unreadable_date_is_attention_never_a_false_contradiction():
     result = _by_rule(run_invariants(**case))["date-coherence"]
     assert result.disposition == ATTENTION
     assert "mid-2022" in result.detail
+
+
+def test_an_absent_or_malformed_ats_spec_version_fails_audit_integrity():
+    """The artifact recheck is versioned against this field, so a bundle that
+    does not state it must never be read as current."""
+    for value, present in ((None, False), ("0", True), (4, True)):
+        case = make_case()
+        report = json.loads(case["ats_report_json"])
+        if present:
+            report["spec_version"] = value
+        else:
+            report.pop("spec_version")
+        case["ats_report_json"] = json.dumps(report)
+        result = _by_rule(run_invariants(**case))["audit-integrity"]
+        assert result.disposition == FAIL, value
+        assert "spec_version" in result.detail
+
+
+def test_a_prior_ats_projection_is_attention_named_artifact_recheck_unsupported():
+    case = make_case()
+    report = json.loads(case["ats_report_json"])
+    report["spec_version"] = "3"
+    case["ats_report_json"] = json.dumps(report)
+    result = _by_rule(run_invariants(**case))["artifact-recheck"]
+    assert result.disposition == ATTENTION
+    assert "artifact-recheck-unsupported" in result.detail
+    # Attention is not a failure: the judges still run.
+    assert invariants_passed(run_invariants(**case))
+
+
+# -- the typed headline, re-verified from the snapshot -------------------------
+
+def test_a_changed_headline_fails_regrounding():
+    """The headline is typed from the snapshot's family name, so a stored
+    model carrying any other line, including a flattering one built from
+    allowed words, fails re-verification."""
+    for tampered in ("Senior FDE", "Head of FDE"):
+        case = make_case()  # a consistent bundle, then the stored model alone
+        case["cv"] = replace(make_cv(), headline=tampered)
+        result = _by_rule(run_invariants(**case))["regrounding"]
+        assert result.disposition == FAIL, tampered
+        assert "headline" in result.detail
+    # A null headline is legal in the content model, so re-grounding accepts
+    # it; the drift from a bundle that renders one is caught by the projection
+    # instead, which is why removing the headline cannot leave the suite green.
+    case = make_case()
+    case["cv"] = replace(make_cv(), headline=None)
+    results = _by_rule(run_invariants(**case))
+    assert results["regrounding"].disposition == PASS
+    assert results["artifact-recheck"].disposition == FAIL
+
+
+def test_a_snapshot_without_a_usable_family_fails_the_shape_check():
+    """Re-verification cannot derive the typed headline from a snapshot that
+    carries no family name, so the bundle is rejected by name instead of the
+    name being coerced to empty and a headline-less model re-verifying against
+    nothing."""
+    for mutate, expected in (
+            (lambda s: s["strategy"].pop("family"), "strategy family block is malformed"),
+            (lambda s: s["strategy"].update(family="rf_1"), "strategy family block is malformed"),
+            (lambda s: s["strategy"]["family"].update(name="  "),
+             "strategy family block is malformed"),
+            (lambda s: s["strategy"]["family"].pop("id"), "strategy family block is malformed"),
+            (lambda s: s["strategy"]["family"].update(id="rf_other"),
+             "does not match the snapshot's role_family_id")):
+        case = make_case()
+        snapshot = json.loads(json.dumps(case["snapshot"]))
+        mutate(snapshot)
+        snapshot_bytes = json.dumps(snapshot, indent=2, sort_keys=True).encode()
+        case.update(snapshot=snapshot, snapshot_bytes=snapshot_bytes,
+                    input_context_hash=hashlib.sha256(snapshot_bytes).hexdigest())
+        results = run_invariants(**case)
+        result = _by_rule(results)["audit-integrity"]
+        assert result.disposition == FAIL, expected
+        assert expected in result.detail
+        # Audit integrity returns alone: nothing else judged unattested bytes.
+        assert len(results) == 1

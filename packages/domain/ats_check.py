@@ -8,7 +8,12 @@ Verified in code against the versioned normalization spec:
 - section-by-section normalized sequence equality (transformation whitelist:
   line wrapping, whitespace collapse, bullet glyphs), rejecting unmatched
   extra, missing, or repeated tokens, so omitted, duplicated, injected, or
-  reordered body text fails, not just missing headings;
+  reordered body text fails, not just missing headings. The expectation is
+  the typed projection in domain/cv_sections.py and nothing else: every
+  visual string the page carries, headline, contact links, the "Present"
+  label of an ongoing role and the footer included, is projected there, so a
+  string the model does not represent fails the check instead of being
+  whitelisted through it (OC-41 slice one);
 - page count against the render budget (default 1 page, hard maximum 2;
   overflow is a build failure, never a silently shipped second page)."""
 
@@ -52,8 +57,8 @@ class AtsReport:
 
 
 def expected_section_tokens(cv: CvModel) -> list[tuple[str, list[str]]]:
-    """Per section (canonical order): heading tokens plus every block's tokens,
-    in rendered order."""
+    """Per section (canonical document order, footer included): heading tokens
+    plus every block's tokens, in rendered order."""
     result = []
     for section in cv_sections(cv):
         tokens: list[str] = []

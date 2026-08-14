@@ -36,14 +36,19 @@ PASS = "pass"
 FAIL = "fail"
 ATTENTION = "attention"
 
-# Every verifier spec identifier this suite RECOGNIZES as a real spec, for
-# audit-shape validation only. A stored report from a prior spec is a
+# Every spec identifier this suite RECOGNIZES as a real spec, for audit-shape
+# validation only. One identifier covers both the verifier's normalization
+# rules and the ATS visual projection, because one constant versions both
+# (domain/grounding_spec.py). A stored report from a prior spec is a
 # well-formed audit record, not a corrupt one: the semantic mismatch belongs
-# to the regrounding rule, which caps the run at ATTENTION (the design's
-# regrounding-unsupported path) while the judges still run. Treating a prior
-# spec as an audit-integrity FAIL would end the run before that rule could
-# ever return. An unrecognized identifier is still a FAIL: it attests nothing.
-RECOGNIZED_VERIFIER_SPEC_VERSIONS = frozenset({"1", "2", "3"})
+# to the regrounding and artifact-recheck rules, which cap the run at
+# ATTENTION (the design's regrounding-unsupported path) while the judges still
+# run. Treating a prior spec as an audit-integrity FAIL would end the run
+# before those rules could ever return. An unrecognized identifier is still a
+# FAIL, and so is a missing or malformed one: it attests nothing, and reading
+# it as current would silently compare an old artifact against new
+# expectations.
+RECOGNIZED_VERIFIER_SPEC_VERSIONS = frozenset({"1", "2", "3", "4"})
 assert SPEC_VERSION in RECOGNIZED_VERIFIER_SPEC_VERSIONS
 
 # The versioned deterministic work-authorization projection: detector
@@ -235,9 +240,19 @@ class _SnapshotSelection:
         return self._facts.get(capability_id, frozenset())
 
 
+class _SnapshotFamily:
+    def __init__(self, name: str):
+        self.name = name
+
+
 class _SnapshotStrategy:
-    def __init__(self, strategy_version: int):
+    def __init__(self, strategy_version: int, family_name: str):
         self.strategy_version = strategy_version
+        # The family row's name is the one strategy value the verifier reads,
+        # because the headline is typed from it and re-verification has to be
+        # able to re-check that (OC-41 slice one). Everything else in the
+        # strategy block stays unrenderable and unread.
+        self.family = _SnapshotFamily(family_name)
 
 
 class SnapshotContext:
@@ -249,7 +264,13 @@ class SnapshotContext:
     def __init__(self, snapshot: dict):
         self._view = snapshot["renderable_grounding_view"]
         self.role_family_id = snapshot["role_family_id"]
-        self.strategy = _SnapshotStrategy(snapshot["strategy"]["strategy_version"])
+        strategy = snapshot["strategy"]
+        # Read strictly, never coerced: the shape check has already rejected a
+        # snapshot without a usable family by name, and inventing an empty
+        # name here would let a stored model with no headline re-verify
+        # against nothing.
+        self.strategy = _SnapshotStrategy(strategy["strategy_version"],
+                                          strategy["family"]["name"])
         self.selection = _SnapshotSelection(snapshot.get("selection", {}))
 
     def renderable_grounding_view(self) -> dict:
@@ -281,6 +302,10 @@ def run_invariants(*, cv: CvModel, snapshot: dict, snapshot_bytes: bytes,
         _check_user_constraints(extracted_text, policy_snapshot),
         _check_artifact_recheck(cv, extracted_text, ats_report),
     )
+
+
+def _nonempty(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _check_snapshot_shape(snapshot) -> list[str]:
@@ -328,6 +353,23 @@ def _check_snapshot_shape(snapshot) -> list[str]:
     if not isinstance(strategy, dict) or not isinstance(
             strategy.get("strategy_version"), int):
         problems.append("strategy block is malformed")
+    else:
+        # The family row is required shape, not optional detail: the headline
+        # is typed from its name, so a snapshot that cannot supply one cannot
+        # re-verify a headline, and a model with no headline would otherwise
+        # pass re-grounding by matching nothing at all. It is named here
+        # rather than coerced to an empty string downstream.
+        family = strategy.get("family")
+        if not isinstance(family, dict) or not _nonempty(family.get("id")) \
+                or not _nonempty(family.get("name")):
+            problems.append(
+                "strategy family block is malformed (an object carrying a"
+                " non-empty id and name is required: the headline is typed"
+                " from that name)")
+        elif family["id"] != snapshot.get("role_family_id"):
+            problems.append(
+                f"strategy family id '{family['id']}' does not match the"
+                f" snapshot's role_family_id '{snapshot.get('role_family_id')}'")
     selection = snapshot.get("selection")
     if not isinstance(selection, dict):
         problems.append("selection is not an object")
@@ -403,8 +445,15 @@ def _check_audit_integrity(snapshot, snapshot_bytes: bytes, input_context_hash: 
             ats = json.loads(ats_report_json)
             if not isinstance(ats, dict):
                 problems.append("ATS report has the wrong shape")
-            elif not ats.get("passed"):
-                problems.append("stored ATS report did not pass")
+            else:
+                if not ats.get("passed"):
+                    problems.append("stored ATS report did not pass")
+                if ats.get("spec_version") not in RECOGNIZED_VERIFIER_SPEC_VERSIONS:
+                    problems.append(
+                        f"ATS report spec_version '{ats.get('spec_version')}' is"
+                        " not a spec identifier this Gauntlet suite recognizes"
+                        " (the artifact recheck is versioned against it, so an"
+                        " absent or malformed value must never read as current)")
         except json.JSONDecodeError:
             problems.append("ATS report is not parseable JSON")
     if problems:
@@ -525,7 +574,22 @@ def _check_artifact_recheck(cv: CvModel, extracted_text: str, ats_report: dict) 
     """Page budget and section order re-asserted from the stored artifact via
     the same pdftotext path (defense in depth against a stale or hand-swapped
     artifact). The recorded page count is the budget: the stored artifact must
-    still extract to exactly what was verified."""
+    still extract to exactly what was verified.
+
+    Versioned against the projection that produced the artifact, exactly as
+    regrounding is versioned against the normalization spec. A version 3 PDF
+    carries no footer and no headline, so re-checking it against the shipped
+    version 4 expectation would turn every previously valid package into a
+    hard invariant failure, which is a false accusation about the artifact
+    rather than a finding about it. The mismatch is reported by name and caps
+    the run at ATTENTION instead."""
+    stored_spec = ats_report.get("spec_version")
+    if stored_spec != SPEC_VERSION:
+        return InvariantResult(
+            "artifact-recheck", ATTENTION,
+            f"artifact-recheck-unsupported: the stored artifact was rendered"
+            f" under ATS projection {stored_spec!r}, not the shipped"
+            f" {SPEC_VERSION!r}; regenerate the package to re-check it")
     budget = max(1, int(ats_report.get("page_count", 1)))
     report = check_ats(extracted_text, cv, page_budget=budget)
     if report.passed:

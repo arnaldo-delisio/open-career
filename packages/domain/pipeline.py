@@ -23,7 +23,7 @@ from typing import Callable
 from domain.ats_check import DEFAULT_PAGE_BUDGET, check_ats
 from domain.context import GenerationContext
 from domain.cv_model import CvModel
-from domain.generation import CvDraftingService, DraftResult
+from domain.generation import CvDraftingService, DraftResult, build_headline
 from domain.grounding import GroundingVerifier
 from domain.packages import FAILED, VERIFIED, LeaseLostError, PackageVersion, object_locator
 from domain.ports import CvRenderer, PackageRepository, PdfTextExtractor, StorageAdapter
@@ -203,9 +203,13 @@ class GenerationPipeline:
         generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         if edited_model is not None:
             # The regenerated version's timestamp comes from the pipeline
-            # clock, never carried stale from the reviewed version.
+            # clock, never carried stale from the reviewed version, and the
+            # code-stamped headline is re-asserted from the current context
+            # here too: an edited model may have been stored before the
+            # positioning layer existed, and a write-back must not be the way
+            # a version acquires a missing or stale target-role line.
             edited_model = dataclasses.replace(
-                edited_model,
+                edited_model, headline=build_headline(context),
                 meta=dataclasses.replace(edited_model.meta, generated_at=generated_at))
             report = GroundingVerifier(context).verify(edited_model)
             draft = DraftResult(cv=edited_model, report=report, attempts=0,

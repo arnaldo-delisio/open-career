@@ -1,35 +1,65 @@
 <!DOCTYPE html>
-<!-- Single-column ATS-safe CV template (OC-34; spec:
-     decisions/package-generation-design.md, "Render path"). Contains zero
+<!-- Single-column ATS-safe CV template (OC-34; typography and page discipline
+     per OC-41 slice one; specs: decisions/package-generation-design.md,
+     "Render path", and decisions/cv-positioning-layer.md). Contains zero
      personal data (OC-26): every value arrives from the content model at
-     render time. ATS defenses baked into the CSS, not post-hoc: static
+     render time. ATS defenses baked into the CSS, not post-hoc: a static
      system font stack (the variable-font "SUM M ARY" extractor bug),
-     ligatures disabled (the fi/fl mojibake bug). Adapted as ideas, with
-     attribution, from career-ops (MIT) and ai-job-search; written fresh. -->
+     ligatures disabled (the fi/fl mojibake bug), one column everywhere (a
+     two-column grid measurably linearises wrong under pdftotext). Adapted as
+     ideas, with attribution, from career-ops (MIT) and ai-job-search; written
+     fresh. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>CV</title>
 <style>
-  @page { size: A4; margin: 14mm 16mm; }
+  @page { size: A4; margin: 15mm 16mm; }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; padding: 0;
-    font-family: Arial, Helvetica, "Liberation Sans", "DejaVu Sans", sans-serif;
+    /* Static serif faces only, in installed-first order, with a generic last
+       resort. A variable font here caused the extractor to split words. */
+    font-family: "Liberation Serif", "DejaVu Serif", Georgia, "Times New Roman", serif;
     font-variant-ligatures: none;
     font-feature-settings: "liga" 0, "clig" 0, "dlig" 0, "hlig" 0;
-    font-size: 10pt; line-height: 1.35; color: #111;
+    font-size: 10pt; line-height: 1.42; color: #14140f;
   }
-  .name { font-size: 17pt; font-weight: bold; margin: 0 0 2pt 0; }
-  .contact { margin: 0 0 8pt 0; }
+  /* Type scale: 21 / 11 / 10.5 / 10 / 8.75 pt. Hierarchy comes from size,
+     weight, letter-spacing and rules, never from colour alone. */
+  .name {
+    font-size: 21pt; font-weight: bold; letter-spacing: -0.2pt;
+    line-height: 1.1; margin: 0 0 3pt 0;
+  }
+  .headline {
+    font-size: 11pt; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.7pt; margin: 0 0 4pt 0;
+  }
+  .contact { font-size: 8.75pt; color: #3c3c34; margin: 0 0 2pt 0; }
   h2 {
-    font-size: 10.5pt; text-transform: uppercase; letter-spacing: 0.5pt;
-    border-bottom: 1px solid #444; padding-bottom: 1pt; margin: 10pt 0 4pt 0;
+    font-size: 10.5pt; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.9pt; border-bottom: 0.75pt solid #8b8b80;
+    padding-bottom: 2pt; margin: 13pt 0 5pt 0;
+    /* Keep-with-next: a heading must not be the last thing on a page. */
+    break-after: avoid; page-break-after: avoid;
   }
-  .entry { margin: 0 0 6pt 0; }
-  .entry-head { font-weight: bold; }
-  ul { margin: 2pt 0 0 0; padding-left: 14pt; }
-  li { margin: 0 0 1.5pt 0; }
+  /* One role, one block. break-inside is a request, not a guarantee: a block
+     taller than the page area is split regardless, and CSS offers no way to
+     measure that here. Best effort, deliberately, rather than a promise the
+     paginator cannot keep. */
+  .role { margin: 0 0 7pt 0; break-inside: avoid; page-break-inside: avoid; }
+  .entry-head {
+    font-weight: bold; font-size: 10.5pt; margin: 0 0 1pt 0;
+    break-after: avoid; page-break-after: avoid;
+  }
+  .entry-dates { font-size: 8.75pt; color: #55554c; margin: 0 0 3pt 0; }
+  .body { margin: 0 0 4pt 0; }
+  ul { margin: 0; padding-left: 12pt; }
+  li { margin: 0 0 2.5pt 0; padding-left: 1pt; }
+  .footer {
+    margin: 16pt 0 0 0; padding-top: 4pt; border-top: 0.5pt solid #bdbdb3;
+    font-size: 8pt; color: #77776d; text-align: right;
+  }
   p { margin: 0 0 4pt 0; }
 </style>
 </head>

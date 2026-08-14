@@ -72,7 +72,7 @@ def make_cv(summary="", skills=(SkillItem(name="Python", capability_ids=("cap_1"
             bullets=(Bullet(text="Reduced onboarding time by 40% for 12 enterprise"
                                  " customers by automating the Python deployment pipeline",
                             fact_ids=("fact_1",)),),
-            entry_overrides=None, header=None):
+            entry_overrides=None, header=None, headline=None):
     entry = CvExperienceEntry(
         experience_id="exp_1", title=EXP.title, org=EXP.org,
         start_date=EXP.start_date, end_date=EXP.end_date, bullets=tuple(bullets))
@@ -82,7 +82,7 @@ def make_cv(summary="", skills=(SkillItem(name="Python", capability_ids=("cap_1"
         header=header or CvHeader(name="Test Person", email="t@example.com",
                                   phone="+39 333 1234567", location="Milan, Italy",
                                   links=("https://github.com/example",)),
-        summary=summary, skills=tuple(skills), experiences=(entry,),
+        headline=headline, summary=summary, skills=tuple(skills), experiences=(entry,),
         meta=CvMeta(role_family_id="rf_1", strategy_version=1,
                     generated_at="2026-08-11T00:00:00Z"))
 
@@ -344,8 +344,9 @@ def test_omitted_confirmed_education_row_fails_coverage():
 
 def test_omitted_skeleton_fields_fail():
     """Null is legal only where the canonical value is null: omitting a
-    confirmed org or date is as wrong as altering it (an omitted end date
-    would render as 'Present')."""
+    confirmed org or date is as wrong as altering it. This is what keeps the
+    null-end-date rule (a null end date means ongoing and renders 'Present')
+    from becoming a hole: an entry may only be null where its row is."""
     for field in ("org", "start_date", "end_date"):
         report = verify(make_cv(entry_overrides={field: None}))
         assert "skeleton" in rules(report), field
@@ -406,3 +407,30 @@ def test_out_of_order_experiences_fail():
     assert verify(_cv_with(experiences=(newer, older)), context).passed
     report = verify(_cv_with(experiences=(older, newer)), context)
     assert "ordering" in rules(report)
+
+
+# -- the positioning layer, slice one (OC-41) ---------------------------------
+
+def test_headline_typed_from_the_family_passes_and_absence_passes():
+    assert verify(make_cv(headline=FAMILY.name)).passed
+    assert verify(make_cv(headline=None)).passed
+
+
+def test_fabricated_headline_fails():
+    """The headline is typed from the family row in code, so a drafted one,
+    even a flattering-but-plausible one, is rejected rather than rendered."""
+    report = verify(make_cv(headline="Principal FDE"))
+    assert "headline" in rules(report)
+    assert "headline" in rules(verify(make_cv(headline="FDE Leadership")))
+
+
+def test_an_ongoing_role_verifies_with_a_null_end_date():
+    """A canonical null end date means ongoing: the entry matches it as null
+    (the renderer, not the model, supplies 'Present'), and the model writing
+    that word into the field is a skeleton failure."""
+    ongoing = Experience(id="exp_1", kind="role", title=EXP.title, org=EXP.org,
+                         start_date=EXP.start_date, end_date=None)
+    context = make_context(experiences=(ongoing, EXP2))
+    assert verify(make_cv(entry_overrides={"end_date": None}), context).passed
+    report = verify(make_cv(entry_overrides={"end_date": "Present"}), context)
+    assert "skeleton" in rules(report)

@@ -10,12 +10,36 @@ Covers: Unicode normalization (plus the mojibake incident classes: em-dashes,
 smart quotes, zero-width characters, NBSP), case folding, a lemmatization
 table, number and date canonicalization (word and digit forms, units kept
 with values), and an explicit non-splitting rule for URLs, version strings,
-and acronyms."""
+and acronyms.
+
+The version also identifies the visual projection the checks run over, since
+what the document renders is half of what "equal" means. As of version 4
+(OC-41 slice one) the projection carries, in domain/cv_sections.py:
+
+- the target-role `headline`, typed in code from the role family row and
+  checked by the verifier for exact equality with it, never model-authored;
+- the profile link fields, in the contact line, omitted when absent;
+- open-ended roles as "<start> - Present". A null `end_date` is a canonical
+  statement that the role is ongoing, not an absent value, so exactly one
+  display transformation (`cv_sections.display_dates`) turns it into text.
+  The rule is closed to `end_date` on a dated row: no other absent value in
+  the content model renders as text, and the verifier still compares every
+  skeleton field against its canonical row unconditionally;
+- a footer carrying the name already on the page.
+
+Version 3 documents rendered under the older projection, so a package built
+then re-grounds against different bytes than it shipped and its stored PDF
+carries no footer. The Gauntlet names both mismatches and caps the run at
+attention (regrounding-unsupported, artifact-recheck-unsupported) rather than
+passing them or condemning a valid older artifact against expectations it was
+never rendered under. Both gates read the spec identifier stored in the
+package's own reports, which is why an absent or malformed one fails audit
+integrity instead of defaulting to current."""
 
 import re
 import unicodedata
 
-SPEC_VERSION = "3"
+SPEC_VERSION = "4"
 
 # Pre-render and pre-compare character normalization (the mojibake-in-sent-
 # letters incident class): em/en dashes, smart quotes, zero-width, NBSP.
