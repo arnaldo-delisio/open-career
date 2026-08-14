@@ -133,15 +133,27 @@ class ClaudeCodeAdapter(ModelAdapter):
             # Otherwise an unavailable backend reads as a bad row and burns the
             # budget and the queue's attempts, exactly what
             # BACKEND_UNAVAILABLE_STATUSES exists to prevent.
+            # Best-effort classification: NOTHING this parse can raise may be
+            # fatal, or one hostile row aborts the whole run. A syntactically
+            # valid envelope carrying an enormous integer literal makes
+            # json.loads raise a bare ValueError from the int/str conversion
+            # limit, and deep nesting raises RecursionError; both fall through
+            # to the ModelCallError path below, exactly like unparseable output.
             try:
                 envelope = json.loads(proc.stdout)
-            except (json.JSONDecodeError, TypeError):
+            except (ValueError, TypeError, RecursionError):  # ValueError covers JSONDecodeError
                 envelope = None
             error = self._backend_unavailable_error(envelope)
             if error is not None:
                 raise error
+            # Status-only, like the exit-0 path: stderr and stdout are
+            # provider-authored prose and can echo prompt or posting material,
+            # and this exception may be logged by any caller (OC-13).
+            status = _provider_status(envelope)
             raise ModelCallError(
-                f"'{self._command}' exited {proc.returncode}: {proc.stderr.strip() or proc.stdout.strip()}")
+                f"'{self._command}' exited {proc.returncode}"
+                + (f" reporting provider status {status}" if status is not None else ""),
+                provider_status=status)
         try:
             envelope = json.loads(proc.stdout)
         except json.JSONDecodeError as e:

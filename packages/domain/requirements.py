@@ -316,12 +316,16 @@ def normalized_tokens(text: str) -> frozenset[str]:
 
 
 def _ordered_content_tokens(text: str) -> tuple[str, ...]:
-    """The same normalization as stopword_free_tokens, with token ORDER kept.
-    Used only as a dedup signature (title_relevance_score): as a set, "Data
-    Science" and "Science Data" collapse into one term and one of them loses
-    its point, and they are genuinely different terms."""
-    return tuple(token for token in _TOKEN.findall(text.lower())
-                 if token not in VOCABULARY_STOPWORDS)
+    """The same normalization as stopword_free_tokens, with token ORDER kept
+    and repeats dropped. Used only as a dedup signature
+    (title_relevance_score): as a set, "Data Science" and "Science Data"
+    collapse into one term and one of them loses its point, and they are
+    genuinely different terms. Repeats go because the matcher itself works on a
+    frozenset, so "Data" and "Data Data" are matching-equivalent; counting them
+    as two terms would let a repeated-token spelling raise a posting's
+    relevance, and its paid-stage ordering, on no extra title evidence."""
+    return tuple(dict.fromkeys(token for token in _TOKEN.findall(text.lower())
+                               if token not in VOCABULARY_STOPWORDS))
 
 
 def stopword_free_tokens(text: str) -> frozenset[str]:

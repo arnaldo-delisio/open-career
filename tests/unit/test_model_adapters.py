@@ -330,14 +330,35 @@ def test_a_nonzero_exit_with_a_row_shaped_envelope_stays_a_model_call_error():
     with pytest.raises(ModelCallError) as excinfo:
         adapter.complete("p")
     assert "exited 1" in str(excinfo.value)
+    # The exit-0 path carries a non-backend status; so must this one, or the
+    # documented diagnostic contract holds on one path only.
+    assert excinfo.value.provider_status == 400
+    assert str(excinfo.value) == "'claude' exited 1 reporting provider status 400"
 
 
-def test_a_nonzero_exit_without_a_json_envelope_is_unchanged():
+def test_a_nonzero_exit_without_a_json_envelope_is_bounded_and_status_only():
+    """stderr and stdout are provider-authored and can echo prompt or posting
+    text; the raised exception may be logged by any caller, so the message
+    carries only the command, the exit code, and a validated status (OC-13)."""
     adapter = ClaudeCodeAdapter(
         run=lambda *a, **k: FakeProc("not json", returncode=2, stderr="boom"))
     with pytest.raises(ModelCallError) as excinfo:
         adapter.complete("p")
-    assert str(excinfo.value) == "'claude' exited 2: boom"
+    assert str(excinfo.value) == "'claude' exited 2"
+    assert excinfo.value.provider_status is None
+
+
+def test_a_nonzero_exit_with_an_absurd_integer_envelope_is_not_fatal():
+    """A syntactically valid envelope with a 5,000-digit integer makes
+    json.loads raise a bare ValueError from Python's int/str conversion limit.
+    This parse is best-effort classification: it must degrade to one failed
+    row, never abort the run."""
+    envelope = '{"api_error_status": ' + "9" * 5000 + "}"
+    adapter = ClaudeCodeAdapter(
+        run=lambda *a, **k: FakeProc(envelope, returncode=1, stderr="boom"))
+    with pytest.raises(ModelCallError) as excinfo:
+        adapter.complete("p")
+    assert str(excinfo.value) == "'claude' exited 1"
 
 
 def test_an_out_of_range_provider_status_is_unknown_not_persisted():

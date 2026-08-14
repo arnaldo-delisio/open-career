@@ -367,3 +367,14 @@ def test_title_relevance_keeps_reordered_terms_distinct():
     costing one of them its point."""
     assert title_relevance_score("Head of Data Science, Science Data Group",
                                  ["Data Science", "Science Data"]) == 2
+
+
+def test_title_relevance_collapses_a_repeated_token_spelling():
+    """The matcher works on a frozenset, so "Data" and "Data Data" are one term
+    to it; counting them as two would let a repeated-token spelling inflate a
+    posting's relevance, and its paid-stage ordering, on no extra title
+    evidence. Permutations still stay distinct."""
+    assert title_relevance_score("Head of Data, Data Group",
+                                 ["Data", "Data Data"]) == 1
+    assert title_relevance_score("Head of Data Science, Science Data Group",
+                                 ["Data Science", "Science Data"]) == 2
