@@ -315,6 +315,15 @@ def normalized_tokens(text: str) -> frozenset[str]:
     return frozenset(_TOKEN.findall(text.lower()))
 
 
+def _ordered_content_tokens(text: str) -> tuple[str, ...]:
+    """The same normalization as stopword_free_tokens, with token ORDER kept.
+    Used only as a dedup signature (title_relevance_score): as a set, "Data
+    Science" and "Science Data" collapse into one term and one of them loses
+    its point, and they are genuinely different terms."""
+    return tuple(token for token in _TOKEN.findall(text.lower())
+                 if token not in VOCABULARY_STOPWORDS)
+
+
 def stopword_free_tokens(text: str) -> frozenset[str]:
     """A vocabulary term's content tokens: normalized, connectives dropped.
     A term made only of connectives ("end-to-end") has no content and matches
@@ -366,12 +375,14 @@ def title_relevance_score(title: str | None, vocabulary: list,
     # spellings of one term ("Data Engineer", "data-engineer") are the same
     # term to this matcher, and letting each score a point would make the
     # numbers incomparable across vocabulary edits that only add a spelling.
+    # The signature keeps token ORDER, so a permutation ("Data Science" and
+    # "Science Data") stays two terms, which is what it is.
     #
     # Nested terms are deliberately NOT collapsed: a title matching both
     # "Engineer" and "Data Engineer" carries more target-family signal than
     # one matching "Engineer" alone, and this score exists to rank exactly
     # that. Please do not "fix" it into an overlap-group count.
-    return len({stopword_free_tokens(name) for name
+    return len({_ordered_content_tokens(name) for name
                 in vocabulary_matches(title, vocabulary, threshold_bp)})
 
 

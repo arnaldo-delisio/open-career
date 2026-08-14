@@ -2300,8 +2300,9 @@ def test_queue_rows_predating_the_relevance_filter_cannot_reach_a_paid_stage(
         families_fingerprint(load_families(storage)))
     _seed_legacy_queue_row(conn, source, legacy_epoch)
 
-    assert migrate(db) == ["0013", "0014"]
-    assert epoch_repo.current() == legacy_epoch + 1  # the legacy row is stale
+    assert migrate(db) == ["0013", "0014", "0015"]
+    # Two bumps, 0013's and 0015's: redundant here, and the legacy row is stale.
+    assert epoch_repo.current() == legacy_epoch + 2
 
     # A run over a board that does not carry the legacy posting: it stays open
     # (one absence is not a closure), so it re-gates on the stale epoch alone.
@@ -2309,7 +2310,7 @@ def test_queue_rows_predating_the_relevance_filter_cannot_reach_a_paid_stage(
         conn, storage, gh_board(gh_job(2, "Engineer")))
     run_once(conn, storage, adapters, config, model)
 
-    assert epoch_repo.current() == legacy_epoch + 1  # unchanged families.json
+    assert epoch_repo.current() == legacy_epoch + 2  # unchanged families.json
     queue = SqlitePromotionQueueRepository(conn)
     legacy = [r for r in queue.list_rows() if r.id == "pmq_legacy"][0]
     assert legacy.state == "superseded"
@@ -2321,6 +2322,60 @@ def test_queue_rows_predating_the_relevance_filter_cannot_reach_a_paid_stage(
     replacement = [r for r in queue.list_rows()
                    if r.opportunity_id == "opp_legacy" and r.id != "pmq_legacy"]
     assert len(replacement) == 1
+    assert replacement[0].relevance_score == 1  # the adjacent title "Engineer"
+    assert replacement[0].epoch == legacy_epoch + 2
+    conn.close()
+
+
+def test_a_database_that_ran_the_original_0013_is_repaired_by_0015(tmp_path):
+    """The upgrade path 0013's in-place edit cannot reach. The runner records a
+    version string and no content checksum, so a database that applied the
+    ORIGINAL 0013 (the ALTER alone, no epoch bump) skips the edited file
+    forever: its legacy queue rows stay unscored AND current, and the
+    relevance-blind aging half of select_for_stage would claim them into a paid
+    stage. 0015 repeats the bump as a forward migration, which is the only kind
+    of change an already-applied version can still receive."""
+    db = tmp_path / "open-career.sqlite3"
+    original = tmp_path / "migrations-original-0013"
+    original.mkdir()
+    for path in sorted(MIGRATIONS_DIR.glob("[0-9]*.sql")):
+        version = path.name.split("_")[0]
+        if version > "0014":
+            break
+        text = path.read_text()
+        if version == "0013":  # 0013 as it shipped, before the bump was added
+            text = text.split("UPDATE dependency_epoch")[0]
+        (original / path.name).write_text(text)
+    migrate(db, migrations_dir=original)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    storage = LocalStorageAdapter(tmp_path)
+    (tmp_path / "families.json").write_text(json.dumps(FIXTURE_FAMILIES))
+    source = seed_source(conn)
+    epoch_repo = SqliteDependencyEpochRepository(conn)
+    legacy_epoch = epoch_repo.sync_families_fingerprint(
+        families_fingerprint(load_families(storage)))
+    _seed_legacy_queue_row(conn, source, legacy_epoch)
+
+    # 0013 is recorded as applied, so the edited file is skipped: only the
+    # forward migration runs, and it is what advances the epoch.
+    assert migrate(db) == ["0015"]
+    assert epoch_repo.current() == legacy_epoch + 1
+
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(2, "Engineer")))
+    run_once(conn, storage, adapters, config, model)
+
+    queue = SqlitePromotionQueueRepository(conn)
+    legacy = [r for r in queue.list_rows() if r.id == "pmq_legacy"][0]
+    assert legacy.state == "superseded"
+    assert legacy.attempts == 0  # never claimed, so never paid for
+    assert legacy.relevance_score == 0  # unknown, and it stayed unknown
+
+    replacement = [r for r in queue.list_rows()
+                   if r.opportunity_id == "opp_legacy" and r.id != "pmq_legacy"]
+    assert len(replacement) == 1  # re-gated and re-scored before anything paid
     assert replacement[0].relevance_score == 1  # the adjacent title "Engineer"
     assert replacement[0].epoch == legacy_epoch + 1
     conn.close()

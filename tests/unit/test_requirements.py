@@ -359,3 +359,11 @@ def test_title_relevance_counts_a_normalized_duplicate_term_once():
     # term is more target-family evidence than matching the broad one alone.
     assert title_relevance_score("Senior Data Platform Engineer",
                                  ["Engineer", "Data Platform Engineer"]) == 2
+
+
+def test_title_relevance_keeps_reordered_terms_distinct():
+    """The dedup signature is order-preserving: a set of tokens would collapse
+    two genuinely different terms whose tokens are a permutation of each other,
+    costing one of them its point."""
+    assert title_relevance_score("Head of Data Science, Science Data Group",
+                                 ["Data Science", "Science Data"]) == 2

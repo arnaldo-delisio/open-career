@@ -30,10 +30,11 @@ ALTER TABLE promotion_queue ADD COLUMN relevance_score INTEGER NOT NULL DEFAULT 
 -- does the rest: the next run's stale-epoch sweep supersedes every queued row
 -- and the stale-gate re-gate re-scores and re-enqueues the ones that qualify.
 --
--- This lands in 0013 rather than a follow-up migration because 0013 has never
--- been applied anywhere (it ships unreleased, on this branch, with the change
--- it belongs to), so an in-place edit reaches every upgrade path, including a
--- database that applied 0012 in an earlier run.
+-- This bump arrived by an in-place edit of 0013, which reaches only databases
+-- that had not yet applied it: the runner is version-keyed, so an edit to an
+-- applied migration is invisible. 0015 repeats the bump as a forward migration
+-- for the databases this one misses, and keeping both costs a fresh install
+-- one redundant re-gate.
 UPDATE dependency_epoch
    SET epoch = epoch + 1,
        updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')

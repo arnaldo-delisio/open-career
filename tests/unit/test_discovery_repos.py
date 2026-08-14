@@ -417,12 +417,13 @@ def test_unknown_terminal_run_status_is_rejected(repos):
 
 
 def test_dependency_epoch_bumps_by_one(repos):
-    # A migrated database starts at 1, not 0: 0006 seeds the row at 0 and 0013
-    # advances it once so queue rows enqueued before title relevance existed
-    # are stale on arrival.
-    assert repos["epoch"].current() == 1
-    assert repos["epoch"].bump() == 2
+    # A migrated database starts at 2, not 0: 0006 seeds the row at 0, and both
+    # 0013 and its forward repair 0015 advance it so queue rows enqueued before
+    # title relevance existed are stale on arrival (the second bump is
+    # redundant on a fresh install and costs one deterministic re-gate).
+    assert repos["epoch"].current() == 2
     assert repos["epoch"].bump() == 3
+    assert repos["epoch"].bump() == 4
 
 
 def test_families_fingerprint_bumps_the_epoch_only_when_it_changes(repos):
@@ -430,7 +431,7 @@ def test_families_fingerprint_bumps_the_epoch_only_when_it_changes(repos):
     and no repository write announces an edit, so the run compares the
     fingerprint. The unrecorded (NULL) fingerprint counts as a change, which
     re-gates once on the first run after migration 0012."""
-    base = repos["epoch"].current()  # 1 after migration 0013's own bump
+    base = repos["epoch"].current()  # 2 after the 0013/0015 bumps
     assert repos["epoch"].sync_families_fingerprint("abc") == base + 1
     assert repos["epoch"].sync_families_fingerprint("abc") == base + 1
     assert repos["epoch"].sync_families_fingerprint("def") == base + 2
@@ -475,11 +476,11 @@ def test_concurrent_sync_of_the_same_fingerprint_bumps_the_epoch_once(tmp_path):
     for t in threads:
         t.join()
     assert errors == []
-    assert results == [2, 2]  # one bump on top of migration 0013's own
+    assert results == [3, 3]  # one bump on top of the 0013/0015 bumps
     reader = sqlite3.connect(db)
     try:
         assert reader.execute(
-            "SELECT epoch FROM dependency_epoch WHERE id = 1").fetchone()[0] == 2
+            "SELECT epoch FROM dependency_epoch WHERE id = 1").fetchone()[0] == 3
     finally:
         reader.close()
 
