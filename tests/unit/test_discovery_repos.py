@@ -438,7 +438,17 @@ def test_concurrent_sync_of_the_same_fingerprint_bumps_the_epoch_once(tmp_path):
     the comparison in a preceding SELECT, pysqlite's implicit transaction had
     not begun yet, so two connections could both read the old fingerprint and
     both bump, costing a redundant stale sweep. Two connections racing on the
-    SAME fingerprint must leave exactly one bump."""
+    SAME fingerprint must leave exactly one bump.
+
+    This is an end-state assertion, not a proof that a read-before-write window
+    is closed: the barrier only aligns the two threads just before the call, so
+    one thread can finish entirely before the other starts and the assertion
+    still holds. It cannot deterministically force the interleaving it appears
+    to guard against. That's acceptable here because the current implementation
+    has no separate SELECT to interleave with — the guard is the UPDATE
+    statement's own `IS NOT` condition, evaluated atomically by SQLite. If
+    someone reintroduces a preceding SELECT, this test must not be relied on
+    to catch the regression; it would need a real blocking seam instead."""
     db = tmp_path / "race.sqlite3"
     migrate(db)
     barrier = threading.Barrier(2)
