@@ -9,6 +9,7 @@ through ModelAdapter inside the untrusted-content isolation boundary. The
 proposed action defaults to IGNORE/MONITOR (OC-23); nothing here pursues.
 """
 
+import hashlib
 import json
 import sqlite3
 import time
@@ -394,6 +395,20 @@ def _string_tuple(value, where: str) -> tuple[str, ...]:
                  for item in value)
 
 
+def families_fingerprint(families: list[TargetFamily]) -> str:
+    """A deterministic fingerprint of the VALIDATED families, not the file
+    bytes: reformatting, key reordering or a comment-only edit must not read as
+    a change, and any change to what discovery actually uses must. Order within
+    the config is kept significant because the coverage vocabulary is built in
+    first-seen order and the reported term lists follow it."""
+    canonical = json.dumps(
+        [{"name": f.name, "seniority": f.seniority,
+          "search_vocabulary": list(f.search_vocabulary),
+          "adjacent_titles": list(f.adjacent_titles)} for f in families],
+        sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def vocabulary_terms(families: list[TargetFamily]) -> list[str]:
     """The deterministic coverage vocabulary: every family's search terms,
     adjacent titles and its own name, deduplicated in first-seen order. These
@@ -467,7 +482,13 @@ class DiscoveryRunner:
         # row would otherwise strand the lease until its TTL expired, blocking
         # every later run for no reason.
         try:
-            epoch = retry_on_locked(self._epoch_repo.current)
+            # families.json is a candidate-side dependency with no repository
+            # write behind it (OC-42), so the run itself detects an edit: the
+            # bump lands before the epoch is read, and the existing stale-epoch
+            # sweep does the re-gating and coverage recomputation.
+            fingerprint = families_fingerprint(self._families)
+            epoch = retry_on_locked(
+                lambda: self._epoch_repo.sync_families_fingerprint(fingerprint))
             # Holding the lease, any run row still 'running' whose own lease
             # ownership no longer holds is provably abandoned (§4): reconcile
             # it before starting, so run history stops reporting phantom live

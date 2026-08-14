@@ -285,7 +285,7 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 # human, loop and controls, and requiring "and", "in" and "the" to appear
 # verbatim in one excerpt is what made the shipped all-tokens rule match
 # nothing at all. A closed, tested constant, never a model.
-CAPABILITY_STOPWORDS: frozenset[str] = frozenset({
+VOCABULARY_STOPWORDS: frozenset[str] = frozenset({
     "a", "an", "and", "at", "by", "for", "from", "in", "into", "of", "on",
     "or", "the", "to", "with", "within", "across", "over", "under", "via",
     "end", "e2e", "using", "based",
@@ -296,6 +296,17 @@ CAPABILITY_STOPWORDS: frozenset[str] = frozenset({
 # postings and a hand-labelled sample. Configurable because the threshold is a
 # judgment call; the calibration numbers are recorded in the design doc §5.
 CONTENT_FRACTION_BP = 5000
+
+# Below this many content tokens, a term must match in FULL rather than at the
+# fraction above. The threshold was calibrated on capability names, which are
+# long and specific; since OC-42 the vocabulary also carries family names and
+# adjacent titles ("Customer Engineer", "Product Manager"), and those are short
+# labels built almost entirely of generic words. At 5000bp a two-token title
+# matches on either half alone, so "Customer Engineer" scores a hit on any
+# requirement containing "engineer" and coverage inflates on ordinary words.
+# Requiring every content token of a short term keeps them honest, and leaves
+# the calibrated fraction untouched for the 3+ token terms it was measured on.
+SHORT_TERM_MAX_CONTENT_TOKENS = 2
 
 
 def normalized_tokens(text: str) -> frozenset[str]:
@@ -309,14 +320,16 @@ def stopword_free_tokens(text: str) -> frozenset[str]:
     A term made only of connectives ("end-to-end") has no content and matches
     nothing: keeping its tokens would turn the emptiest possible term into
     the broadest match key, inflating coverage on ordinary words (Codex r3)."""
-    return normalized_tokens(text) - CAPABILITY_STOPWORDS
+    return normalized_tokens(text) - VOCABULARY_STOPWORDS
 
 
 def capability_matches(requirement: str, vocabulary: list,
                        threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
     """The target-family vocabulary terms matching one requirement phrase: at
     least `threshold_bp` of the term's content tokens present in the phrase's
-    normalized tokens. Deterministic, zero model involvement (OC-37 §5)."""
+    normalized tokens, except short terms (SHORT_TERM_MAX_CONTENT_TOKENS or
+    fewer content tokens), which must match in full. Deterministic, zero model
+    involvement (OC-37 §5)."""
     phrase_tokens = normalized_tokens(requirement)
     matched = []
     for name in vocabulary:
@@ -324,7 +337,10 @@ def capability_matches(requirement: str, vocabulary: list,
         if not content:
             continue
         hit = len(content & phrase_tokens)
-        if (10000 * hit) // len(content) >= threshold_bp:
+        if len(content) <= SHORT_TERM_MAX_CONTENT_TOKENS:
+            if hit == len(content):
+                matched.append(name)
+        elif (10000 * hit) // len(content) >= threshold_bp:
             matched.append(name)
     return matched
 

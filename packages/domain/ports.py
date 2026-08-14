@@ -617,6 +617,15 @@ class DependencyEpochRepository(ABC):
     @abstractmethod
     def bump(self) -> int: ...
 
+    @abstractmethod
+    def sync_families_fingerprint(self, fingerprint: str) -> int:
+        """Record the fingerprint of the validated families config, bumping the
+        epoch first when it differs from the stored one, and return the epoch to
+        run under. The families are operator-authored config (OC-42), so no
+        repository write announces an edit; this comparison is what makes an
+        edited families.json invalidate derived gate and coverage results."""
+        ...
+
 
 class ModelUnavailableError(RuntimeError):
     """The model backend cannot run at all (e.g. claude CLI absent)."""

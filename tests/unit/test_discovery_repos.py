@@ -421,6 +421,17 @@ def test_dependency_epoch_starts_at_zero_and_bumps(repos):
     assert repos["epoch"].bump() == 2
 
 
+def test_families_fingerprint_bumps_the_epoch_only_when_it_changes(repos):
+    """Codex r4: families.json is the candidate-side dependency now (OC-42)
+    and no repository write announces an edit, so the run compares the
+    fingerprint. The unrecorded (NULL) fingerprint counts as a change, which
+    re-gates once on the first run after migration 0012."""
+    assert repos["epoch"].sync_families_fingerprint("abc") == 1
+    assert repos["epoch"].sync_families_fingerprint("abc") == 1
+    assert repos["epoch"].sync_families_fingerprint("def") == 2
+    assert repos["epoch"].current() == 2
+
+
 def test_abandoned_run_row_is_reconciled_but_a_live_one_is_never_touched(conn, repos):
     """Drive defect: a run whose process was killed left its row 'running'
     forever. A row whose owning lease is no longer live reconciles to the

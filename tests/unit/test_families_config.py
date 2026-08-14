@@ -9,7 +9,11 @@ import pytest
 
 from adapters.storage.local import LocalStorageAdapter
 from domain.requirements import coverage_bp
-from workers.discovery.run import load_families, vocabulary_terms
+from workers.discovery.run import (
+    families_fingerprint,
+    load_families,
+    vocabulary_terms,
+)
 
 VALID = {"families": [
     {"name": "Example Platform Family", "seniority": "senior",
@@ -105,3 +109,21 @@ def test_vocabulary_terms_match_requirement_phrases_like_names_did(tmp_path):
                     "willingness to travel")
     assert coverage_bp(requirements, terms) == 5000
     assert coverage_bp(("willingness to travel",), terms) == 0
+
+
+def test_the_fingerprint_ignores_formatting_but_not_meaning(tmp_path):
+    """Codex r4: nothing bumps the dependency epoch when families.json is
+    edited, so derived gate verdicts and coverage numbers would be reported
+    against the previous families. The fingerprint is of the validated
+    structure, so reformatting is not a change and a semantic edit is."""
+    baseline = families_fingerprint(load_families(storage_with(tmp_path, VALID)))
+    reformatted = json.dumps(VALID, indent=4, sort_keys=True)
+    assert families_fingerprint(
+        load_families(storage_with(tmp_path, reformatted))) == baseline
+    changed = {"families": [dict(VALID["families"][0], seniority="staff"),
+                            VALID["families"][1]]}
+    assert families_fingerprint(
+        load_families(storage_with(tmp_path, changed))) != baseline
+    dropped = {"families": [VALID["families"][0]]}
+    assert families_fingerprint(
+        load_families(storage_with(tmp_path, dropped))) != baseline

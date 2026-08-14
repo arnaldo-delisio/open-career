@@ -284,3 +284,33 @@ def test_the_match_threshold_is_configurable():
     assert coverage_bp(("end to end ownership of the product",),
                        ["end-to-end"]) == 0
     assert capability_matches("experience in the and of it", ["and the"]) == []
+
+
+def test_short_vocabulary_terms_must_match_every_content_token():
+    """Codex r4: the vocabulary carries family names and adjacent titles now
+    (OC-42), and a two-token role label is mostly generic words, so the
+    calibrated fraction matched them on 'engineer' alone and inflated
+    coverage. Short terms match in full or not at all; 3+ token terms keep the
+    calibrated fraction, unchanged."""
+    phrase = ("Experience as a forward deployed engineer working with"
+              " enterprise customers")
+    # Reproduced against the real config: both matched on a single generic
+    # token ('engineer'), neither is a real hit.
+    assert capability_matches(phrase, ["Customer Engineer"]) == []
+    assert capability_matches(phrase, ["Founding Engineer"]) == []
+    # A requirement that only mentions the noun does not match the title.
+    assert capability_matches("own the product roadmap", ["Product Manager"]) == []
+    # The genuine matches survive: 3+ content tokens, at the calibrated fraction.
+    assert capability_matches(phrase, ["Forward Deployed AI Engineer"]) == \
+        ["Forward Deployed AI Engineer"]
+    assert capability_matches(phrase, ["forward deployed engineer"]) == \
+        ["forward deployed engineer"]
+    # Single-token terms were already all-or-nothing and stay so.
+    assert capability_matches(phrase, ["engineer"]) == ["engineer"]
+    assert capability_matches(phrase, ["kubernetes"]) == []
+    # 3+ token behaviour, byte-identical to before this rule: three of four
+    # content tokens matches, one of four does not.
+    capability = "Governance and human-in-the-loop controls"
+    assert coverage_bp(("human-in-the-loop governance controls required",),
+                       [capability]) == 10000
+    assert coverage_bp(("strong governance background",), [capability]) == 0

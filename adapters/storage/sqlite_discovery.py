@@ -367,3 +367,22 @@ class SqliteDependencyEpochRepository(DependencyEpochRepository):
                 "UPDATE dependency_epoch SET epoch = epoch + 1,"
                 " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = 1")
         return self.current()
+
+    def sync_families_fingerprint(self, fingerprint: str) -> int:
+        """Compare, bump on a difference, and read the epoch, all in one
+        transaction: a run must never gate against an epoch read before the
+        bump its own config change caused. NULL (never recorded, including
+        every database predating migration 0012) counts as a difference, so
+        the first run after the migration re-gates once."""
+        with self._conn:
+            (stored,) = self._conn.execute(
+                "SELECT families_fingerprint FROM dependency_epoch"
+                " WHERE id = 1").fetchone()
+            if stored != fingerprint:
+                self._conn.execute(
+                    "UPDATE dependency_epoch SET epoch = epoch + 1,"
+                    " families_fingerprint = ?,"
+                    " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
+                    " WHERE id = 1", (fingerprint,))
+            return self._conn.execute(
+                "SELECT epoch FROM dependency_epoch WHERE id = 1").fetchone()[0]
