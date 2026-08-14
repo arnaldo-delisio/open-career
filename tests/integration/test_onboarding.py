@@ -179,7 +179,7 @@ def test_two_cvs_with_the_same_basename_do_not_collide(instance, tmp_path):
 
 def test_onboarding_without_cv_degrades_to_questions(instance):
     answers = [
-        "python backend", "strong",   # capability + strength
+        "python backend",              # capability (no strength question, OC-40)
         "",                            # capabilities done
         "Ship a staff-level role", "mid",  # goal + horizon
         "",                            # goals done
@@ -191,7 +191,7 @@ def test_onboarding_without_cv_degrades_to_questions(instance):
                        ask=_scripted(answers), say=lambda _: None)
 
         capability = SqliteCapabilityRepository(conn).get_by_name("python backend")
-        assert capability.strength == "strong"
+        assert capability.strength == "unrated"
 
         goals = SqliteCareerGoalRepository(conn).list_all()
         assert [(g.statement, g.horizon) for g in goals] == [("Ship a staff-level role", "mid")]
@@ -224,7 +224,7 @@ def test_capability_ends_with_an_eligible_chain_without_any_link_question(
     cv.write_text("Jane Placeholder\nBackend Engineer at Acme 2021-2023\n")
     answers = [
         "1a", "2a 3a 4a", "", "",                    # review, then two number groups
-        "Backend service design", "strong",          # capability + strength
+        "Backend service design",                    # capability (no strength)
         "",                                          # capabilities done
         "",                                          # goals: none
         "", "", "", "",                              # profile basics skipped
@@ -240,7 +240,11 @@ def test_capability_ends_with_an_eligible_chain_without_any_link_question(
         run_onboarding(conn, LocalStorageAdapter(instance), OneShotModel(), cv,
                        ask=ask, say=lambda _: None)
         assert not any("as supporting" in p for p in prompts)  # question deleted
+        # No strength question either (OC-40): the capability is stored unrated
+        # and what it rests on is computed from the graph.
+        assert not any("Strength" in p for p in prompts)
         capability = SqliteCapabilityRepository(conn).get_by_name("Backend service design")
+        assert capability.strength == "unrated"
         edges = SqliteCareerEdgeRepository(conn)
         supports = edges.active_edges_to("capability", capability.id, "SUPPORTS")
         assert len(supports) == 1  # the interview self-assessment, and only it
@@ -252,7 +256,7 @@ def test_capability_ends_with_an_eligible_chain_without_any_link_question(
         proven = edges.active_edges_from("evidence", interview.id, "PROVES")
         facts_repo = SqliteCareerFactRepository(conn)
         assert [facts_repo.get(e.target_id).statement for e in proven] == [
-            "Self-assessed capability: Backend service design (strong)"]
+            "Self-assessed capability: Backend service design"]
         assert facts_repo.get(proven[0].target_id).user_approved == 1
     finally:
         conn.close()

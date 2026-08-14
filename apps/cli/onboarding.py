@@ -52,7 +52,6 @@ _MARKS = {"a": "accept", "e": "edit", "r": "reject"}
 _MARK_HELP = ("mark items as '1a 2r 3e' (a=accept, e=edit, r=reject),"
               " several per line, ranges allowed ('2-6a')")
 
-_STRENGTHS = ("none", "weak", "moderate", "strong")
 _HORIZONS = ("near", "mid", "long")
 _PROFILE_BASICS = ("full_name", "email", "phone", "location")
 
@@ -717,13 +716,13 @@ def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceReposi
         if capabilities_repo.get_by_name(name):
             say(f"'{name}' already exists; skipping.")
             continue
-        strength = _ask_choice(ask, say, "Strength", _STRENGTHS, "moderate")
-        capability = Capability(id=new_id("cap"), name=name, strength=strength,
-                                last_assessed_at=_now())
+        # No strength question (OC-40): what the capability rests on is computed
+        # from the graph, and a rating stays available deliberately later.
+        capability = Capability(id=new_id("cap"), name=name, strength="unrated")
         capabilities_repo.add(capability)
         fact = CareerFact(
             id=new_id("fact"), fact_type="skill_use",
-            statement=f"Self-assessed capability: {name} ({strength})",
+            statement=f"Self-assessed capability: {name}",
             source="interview", user_approved=1, verified_at=_now(),
         )
         facts_repo.add(fact)

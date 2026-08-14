@@ -12,6 +12,8 @@ from adapters.storage.migrations import migrate
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_entities import (
     SqliteCapabilityRepository,
+    SqliteCareerFactRepository,
+    SqliteEvidenceRepository,
     SqliteRoleFamilyRepository,
 )
 from apps.cli.families import (
@@ -21,7 +23,8 @@ from apps.cli.families import (
     run_families_list,
     run_families_pause,
 )
-from domain.entities import Capability
+from domain.edges import CareerEdge
+from domain.entities import Capability, CareerFact, Evidence
 from domain.ports import ModelAdapter
 
 PROPOSALS = json.dumps([
@@ -171,3 +174,42 @@ def test_add_empty_name_aborts_nonzero(conn):
         run_families_add(conn, _script([""]), said.append)
     assert excinfo.value.code == 1
     assert any("empty name" in s for s in said)
+
+
+class CapturingModel(ModelAdapter):
+    """Same proposals, but keeps the prompt so the payload can be inspected."""
+
+    def __init__(self):
+        self.prompts = []
+
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return PROPOSALS
+
+
+def test_proposal_payload_carries_evidence_depth_not_strength(conn):
+    """OC-40: the model sees what a capability rests on (approved facts and
+    stories reaching it), never the user's self-rating."""
+    facts = SqliteCareerFactRepository(conn)
+    evidence = SqliteEvidenceRepository(conn)
+    edges = SqliteCareerEdgeRepository(conn)
+    evidence.add(Evidence(id="ev_1", evidence_type="cv", title="cv.txt"))
+    facts.add(CareerFact(id="fact_1", fact_type="achievement",
+                         statement="Built the order service", source="cv",
+                         user_approved=1, verified_at="2026-08-13T00:00:00Z"))
+
+    def edge(eid, edge_type, target_type, target_id):
+        edges.add(CareerEdge(
+            id=eid, source_type="evidence", source_id="ev_1", edge_type=edge_type,
+            target_type=target_type, target_id=target_id, claim_kind="fact",
+            provenance="test", created_by="user", user_verified=1))
+
+    edge("edge_p", "PROVES", "career_fact", "fact_1")
+    edge("edge_s", "SUPPORTS", "capability", "cap_1")
+
+    model = CapturingModel()
+    run_families_init(conn, model, _script(["r", "r"]), lambda _: None)
+
+    prompt = model.prompts[0]
+    assert '"supporting_facts": 1' in prompt and '"supporting_stories": 0' in prompt
+    assert "strength" not in prompt

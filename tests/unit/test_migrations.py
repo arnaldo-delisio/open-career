@@ -399,6 +399,59 @@ def test_0009_rebuilds_discovery_runs_on_a_populated_database(tmp_path):
         conn.close()
 
 
+def test_0010_widens_capability_strength_preserving_rows(tmp_path):
+    """The capabilities rebuild (0010) upgrades a populated table: every row
+    and every stored strength survives, 'unrated' becomes insertable, and a
+    value outside the enum is still refused."""
+    import shutil
+
+    db = tmp_path / "test.sqlite3"
+    pre = tmp_path / "pre0010"
+    pre.mkdir()
+    for f in MIGRATIONS_DIR.glob("[0-9]*.sql"):
+        if not f.name.startswith("0010"):
+            shutil.copy(f, pre)
+    migrate(db, migrations_dir=pre)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    with conn:
+        conn.execute("INSERT INTO capabilities (id, name, strength, description,"
+                     " last_assessed_at, created_at) VALUES ('cap_1', 'python',"
+                     " 'strong', 'writes it daily', '2026-08-01T00:00:00Z',"
+                     " '2026-07-01T00:00:00Z')")
+        conn.execute("INSERT INTO capabilities (id, name, strength)"
+                     " VALUES ('cap_2', 'rust', 'weak')")
+        with pytest.raises(sqlite3.IntegrityError):  # pre-0010: not yet allowed
+            conn.execute("INSERT INTO capabilities (id, name, strength)"
+                         " VALUES ('cap_3', 'go', 'unrated')")
+    columns = ("SELECT id, name, strength, description, last_assessed_at,"
+               " created_at, updated_at FROM capabilities ORDER BY id")
+    before = conn.execute(columns).fetchall()
+    conn.close()
+
+    assert "0010" in migrate(db)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        assert conn.execute(columns).fetchall() == before
+        assert [(r[0], r[2]) for r in before] == [("cap_1", "strong"), ("cap_2", "weak")]
+        with conn:  # the widened CHECK accepts the never-asked value
+            conn.execute("INSERT INTO capabilities (id, name, strength)"
+                         " VALUES ('cap_3', 'go', 'unrated')")
+        with pytest.raises(sqlite3.IntegrityError):  # and nothing else
+            with conn:
+                conn.execute("INSERT INTO capabilities (id, name, strength)"
+                             " VALUES ('cap_4', 'erlang', 'bogus')")
+        with pytest.raises(sqlite3.IntegrityError):  # name stays UNIQUE
+            with conn:
+                conn.execute("INSERT INTO capabilities (id, name, strength)"
+                             " VALUES ('cap_5', 'python', 'unrated')")
+    finally:
+        conn.close()
+
+
 def test_0011_adds_run_failure_json_preserving_rows(tmp_path):
     """The aborted-run diagnostic column (0011) lands on a populated
     discovery_runs table: existing rows survive with the new column NULL, a

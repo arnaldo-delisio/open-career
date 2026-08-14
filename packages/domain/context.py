@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from domain.entities import Capability, Experience, RoleFamily
 from domain.grounding_spec import SPEC_VERSION
 from domain.selection import SelectionReport
+from domain.traversal import evidence_depth
 
 
 @dataclass(frozen=True)
@@ -62,8 +63,12 @@ class GenerationContext:
             "facts": facts,
             "experiences": {e.id: _experience_dict(e) for e in self.experiences},
             "profile": dict(self.profile),
-            "capabilities": {c.id: {"name": c.name, "strength": c.strength}
-                             for c in self.covered_capabilities()},
+            # Evidence depth, not the stored strength (OC-40): a self-rating
+            # the user gave their own claimed skill carries no signal and can
+            # only push the drafting model toward stronger claims.
+            "capabilities": {s.capability.id: {"name": s.capability.name,
+                                               **_depth_dict(s.chains)}
+                             for s in self.selection.covered},
         }
 
     # -- snapshot ----------------------------------------------------------
@@ -115,6 +120,12 @@ class GenerationContext:
 
     def snapshot_hash(self) -> str:
         return hashlib.sha256(self.snapshot_json().encode()).hexdigest()
+
+
+def _depth_dict(chains) -> dict:
+    depth = evidence_depth(chains)
+    return {"supporting_facts": depth.supporting_facts,
+            "supporting_stories": depth.supporting_stories}
 
 
 def _experience_dict(e: Experience) -> dict:

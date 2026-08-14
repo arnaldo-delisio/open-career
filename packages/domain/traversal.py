@@ -5,8 +5,14 @@ evidence, then each evidence item's active PROVES (evidence -> career_fact)
 edges to approved, active facts and their experiences. Only generation-eligible
 edges are traversed; matcher-created unverified edges and 'unknown'-typed
 migrated edges never reach generation.
+
+Evidence depth (OC-40) is the computed view over the same walk: how many
+approved active facts and how many behavioural stories a capability actually
+rests on. It replaces the self-rated strength in everything the model reads,
+and it is computed on demand, never stored (OC-22).
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from domain.edges import CareerEdge, eligibility_order_key, is_generation_eligible
@@ -17,6 +23,12 @@ from domain.ports import (
     EvidenceRepository,
     ExperienceRepository,
 )
+
+# Story evidence is minted by the sitting-three story bank, which records the
+# experience a story belongs to in the notes column; apps/cli/stories.py writes
+# this prefix and this is the only marker distinguishing a story from any other
+# thing the user said.
+STORY_NOTE_PREFIX = "story-for-experience:"
 
 
 @dataclass(frozen=True)
@@ -31,6 +43,29 @@ class EvidenceChain:
     supports_edge: CareerEdge
     evidence: Evidence
     facts: tuple[FactChain, ...]
+
+
+@dataclass(frozen=True)
+class EvidenceDepth:
+    """What a capability rests on: distinct approved active facts reachable
+    through its eligible chains, and distinct story evidence rows supporting
+    it. Facts reachable through several chains count once."""
+
+    supporting_facts: int
+    supporting_stories: int
+
+
+def is_story_evidence(evidence: Evidence) -> bool:
+    return (evidence.evidence_type == "user_statement"
+            and bool(evidence.notes)
+            and evidence.notes.startswith(STORY_NOTE_PREFIX))
+
+
+def evidence_depth(chains: Iterable[EvidenceChain]) -> EvidenceDepth:
+    chains = tuple(chains)
+    facts = {fc.fact.id for chain in chains for fc in chain.facts}
+    stories = {chain.evidence.id for chain in chains if is_story_evidence(chain.evidence)}
+    return EvidenceDepth(supporting_facts=len(facts), supporting_stories=len(stories))
 
 
 class EvidenceTraversal:

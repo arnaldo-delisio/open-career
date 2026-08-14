@@ -16,7 +16,7 @@ from adapters.storage.sqlite_entities import (
 )
 from domain.edges import CareerEdge
 from domain.entities import CareerFact, Evidence, Experience
-from domain.traversal import EvidenceTraversal
+from domain.traversal import STORY_NOTE_PREFIX, EvidenceTraversal, evidence_depth
 
 
 @pytest.fixture
@@ -115,3 +115,59 @@ def test_unknown_typed_migrated_edge_stays_excluded_but_listed(conn):
 def test_unknown_capability_yields_no_chains(conn):
     traversal = _seed(conn)
     assert traversal.evidence_for_capability("cap_missing") == []
+
+
+def _story(conn, evidence_id, experience_id):
+    """A story bank evidence row: user_statement carrying the story note prefix."""
+    SqliteEvidenceRepository(conn).add(Evidence(
+        id=evidence_id, evidence_type="user_statement",
+        title="story: Backend Engineer",
+        notes=f"{STORY_NOTE_PREFIX}{experience_id}"))
+
+
+def test_evidence_depth_counts_facts_and_stories(conn):
+    """Two approved facts reached through one evidence row plus one story
+    supporting the capability read as 2 and 1."""
+    traversal = _seed(conn)
+    facts = SqliteCareerFactRepository(conn)
+    facts.add(CareerFact(id="fact_ok2", fact_type="scope", statement="Led the team",
+                         source="cv", user_approved=1, experience_id="exp_1",
+                         verified_at="2026-08-11T00:00:00Z"))
+    edges = SqliteCareerEdgeRepository(conn)
+    _story(conn, "ev_story", "exp_1")
+
+    def edge(id, source_id, edge_type, target_id, target_type):
+        edges.add(CareerEdge(
+            id=id, source_type="evidence", source_id=source_id, edge_type=edge_type,
+            target_type=target_type, target_id=target_id, claim_kind="fact",
+            provenance="test", created_by="user", user_verified=1))
+
+    edge("edge_p4", "ev_cv", "PROVES", "fact_ok2", "career_fact")
+    edge("edge_s3", "ev_story", "SUPPORTS", "cap_1", "capability")
+
+    depth = evidence_depth(traversal.evidence_for_capability("cap_1"))
+    assert (depth.supporting_facts, depth.supporting_stories) == (2, 1)
+
+
+def test_evidence_depth_is_zero_without_approved_active_facts(conn):
+    """Retracted and unapproved facts back nothing: the capability's own
+    evidence rows exist, and the depth still reads 0."""
+    traversal = _seed(conn)
+    with conn:
+        conn.execute("UPDATE career_facts SET status = 'retracted' WHERE id = 'fact_ok'")
+    depth = evidence_depth(traversal.evidence_for_capability("cap_1"))
+    assert (depth.supporting_facts, depth.supporting_stories) == (0, 0)
+
+
+def test_evidence_depth_does_not_double_count_across_chains(conn):
+    """One fact proven by two evidence rows, both supporting the capability,
+    is one fact of depth, not two."""
+    traversal = _seed(conn)
+    edges = SqliteCareerEdgeRepository(conn)
+    edges.add(CareerEdge(
+        id="edge_p_dup", source_type="evidence", source_id="ev_repo",
+        edge_type="PROVES", target_type="career_fact", target_id="fact_ok",
+        claim_kind="fact", provenance="test", created_by="user", user_verified=1))
+    chains = traversal.evidence_for_capability("cap_1")
+    assert sum(len(c.facts) for c in chains) == 2  # the same fact, twice over
+    assert evidence_depth(chains).supporting_facts == 1

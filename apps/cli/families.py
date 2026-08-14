@@ -18,6 +18,7 @@ from adapters.storage.sqlite_entities import (
     SqliteCapabilityRepository,
     SqliteCareerFactRepository,
     SqliteCareerGoalRepository,
+    SqliteEvidenceRepository,
     SqliteExperienceRepository,
     SqliteRoleFamilyRepository,
 )
@@ -26,6 +27,7 @@ from domain.entities import RoleFamily
 from domain.family_proposal import DraftFamily, FamilyProposalService
 from domain.ids import new_id
 from domain.ports import ModelAdapter
+from domain.traversal import EvidenceTraversal, evidence_depth
 from prompts import load_prompt
 
 Ask = Callable[[str], str]
@@ -48,12 +50,21 @@ def _approved_state_json(conn: sqlite3.Connection) -> str:
     facts = [f for f in SqliteCareerFactRepository(conn).list_all()
              if f.user_approved and f.status == "active"]
     capabilities = SqliteCapabilityRepository(conn).list_all()
+    traversal = EvidenceTraversal(
+        SqliteCareerEdgeRepository(conn), SqliteEvidenceRepository(conn),
+        SqliteCareerFactRepository(conn), SqliteExperienceRepository(conn))
+    depths = {c.id: evidence_depth(traversal.evidence_for_capability(c.id))
+              for c in capabilities}
     return json.dumps({
         "experiences": [{"kind": e.kind, "title": e.title, "org": e.org,
                          "start_date": e.start_date, "end_date": e.end_date}
                         for e in experiences],
         "facts": [{"type": f.fact_type, "statement": f.statement} for f in facts],
-        "capabilities": [{"name": c.name, "strength": c.strength} for c in capabilities],
+        # Computed evidence depth, never the self-rated strength (OC-40).
+        "capabilities": [{"name": c.name,
+                          "supporting_facts": depths[c.id].supporting_facts,
+                          "supporting_stories": depths[c.id].supporting_stories}
+                         for c in capabilities],
     }, indent=2)
 
 
