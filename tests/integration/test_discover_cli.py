@@ -524,6 +524,38 @@ def test_zero_cap_exhaustion_wording(instance, capsys, monkeypatch):
     assert "exhausted at" not in out
 
 
+def test_every_exhausted_stage_is_reported_not_only_the_first(
+        instance, capsys, monkeypatch):
+    """Drive defect: a run that capped two stages reported only the first, so
+    an operator could not see that the second was capped too with backlog
+    remaining. Human and --json name every exhausted stage."""
+    patch_run_dependencies(monkeypatch)
+    (instance / "discovery.json").write_text(
+        json.dumps({"max_probes": 0, "max_fetches": 0}))
+    main(["discover", "sources", "add", "greenhouse", "acme"])
+    listed_id = None
+    capsys.readouterr()
+    main(["discover", "sources", "list", "--json"])
+    listed_id = json.loads(capsys.readouterr().out)[0]["id"]
+    main(["discover", "sources", "enable", listed_id])
+    main(["discover", "sources", "add", "greenhouse", "othertenant"])
+    capsys.readouterr()
+
+    main(["discover", "run"])
+    out = capsys.readouterr().out
+    assert "probe stage cap is 0" in out
+    assert "fetch stage cap is 0" in out  # the second stage is not hidden
+
+    main(["discover", "runs"])
+    listing = capsys.readouterr().out
+    assert "probe stage cap is 0" in listing and "fetch stage cap is 0" in listing
+
+    main(["discover", "runs", "--json"])
+    view = json.loads(capsys.readouterr().out)[0]
+    assert view["exhausted_stage"] == "probe"  # the pinned first refusal
+    assert sorted(view["exhausted_stages"]) == ["fetch", "probe"]
+
+
 def test_broken_pipe_exits_quietly(instance, capsys, monkeypatch):
     """Drive defect 6: a closed reader (| head) exits 0 with no traceback."""
     def raising_print(*_args, **_kwargs):

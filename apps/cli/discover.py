@@ -71,21 +71,46 @@ def run_run(conn, storage, model, say, as_json: bool = False) -> None:
         say(failure)
 
 
+def _exhausted_stages(run) -> list[str]:
+    """Every stage that exhausted, not only the one the run row pins. A
+    multi-stage run persists the full set as a note; reading it back is what
+    keeps a second capped stage from being invisible to the operator."""
+    from workers.discovery.run import EXHAUSTED_STAGES_NOTE
+    stages = [run.exhausted_stage] if run.exhausted_stage else []
+    outcomes = json.loads(run.source_outcomes_json) \
+        if run.source_outcomes_json else {}
+    for note in (outcomes.get("notes") or []):
+        if not note.startswith(EXHAUSTED_STAGES_NOTE):
+            continue
+        for stage in note[len(EXHAUSTED_STAGES_NOTE):].split(","):
+            stage = stage.strip()
+            if stage and stage not in stages:
+                stages.append(stage)
+    return stages
+
+
 def _exhaustion_note(run) -> str:
     """Honest wording: a zero cap means nothing was attempted, not that a
-    budget was spent to exhaustion."""
-    if not run.exhausted_stage:
+    budget was spent to exhaustion. Every exhausted stage is reported, so a
+    capped stage with backlog remaining is never hidden behind the first."""
+    stages = _exhausted_stages(run)
+    if not stages:
         return ""
-    from domain.budget import STAGE_LIMITS
     budget = json.loads(run.budget_json)
-    if budget.get(STAGE_LIMITS[run.exhausted_stage]) == 0:
-        return (f" ({run.exhausted_stage} stage cap is 0; nothing attempted"
-                " at that stage)")
-    if run.exhausted_stage in ("extraction", "judgment") \
+    return " (" + "; ".join(_stage_exhaustion_phrase(s, budget)
+                            for s in stages) + ")"
+
+
+def _stage_exhaustion_phrase(stage: str, budget: dict) -> str:
+    from domain.budget import STAGE_LIMITS
+    limit_key = STAGE_LIMITS.get(stage)
+    if limit_key is not None and budget.get(limit_key) == 0:
+        return f"{stage} stage cap is 0; nothing attempted at that stage"
+    if stage in ("extraction", "judgment") \
             and budget.get("max_total_model_calls") == 0:
-        return (f" (max_total_model_calls is 0; nothing attempted at the"
-                f" {run.exhausted_stage} stage)")
-    return f" (exhausted at {run.exhausted_stage})"
+        return (f"max_total_model_calls is 0; nothing attempted at the"
+                f" {stage} stage")
+    return f"exhausted at {stage}"
 
 
 def _failure_note(run) -> str | None:
@@ -155,6 +180,9 @@ def _run_view(run) -> dict:
     return {
         "id": run.id, "run_seq": run.run_seq, "status": run.status,
         "exhausted_stage": run.exhausted_stage,
+        # The full set, not only the pinned first refusal: a consumer reading
+        # exhausted_stage alone cannot see a second capped stage.
+        "exhausted_stages": _exhausted_stages(run),
         "budget": json.loads(run.budget_json),
         "spend": json.loads(run.spend_json) if run.spend_json else None,
         "source_outcomes": json.loads(run.source_outcomes_json)

@@ -108,6 +108,12 @@ def make_env(conn, storage, board: dict, budget: Budget | None = None):
     return transport, adapters, config, model
 
 
+def _prune_raw(storage, locator: str) -> None:
+    """Delete a stored raw payload the way an operator cleanup would; the
+    adapter exposes no delete, so the test reaches for the resolved path."""
+    storage._resolve(locator).unlink()
+
+
 def run_once(conn, storage, adapters, config, model):
     return run_discovery(conn, storage, model, adapters, config=config,
                          say=lambda *_a, **_k: None)
@@ -1295,6 +1301,85 @@ def test_a_run_records_every_stage_that_ran_out(instance):
     note = [n for n in json.loads(run.source_outcomes_json)["notes"]
             if n.startswith("budget exhausted at stages")]
     assert note and "probe" in note[0] and "fetch" in note[0]
+
+
+def test_a_missing_raw_payload_fails_its_row_not_the_whole_run(instance):
+    """Drive defect: raw snapshots are prunable operational data, so a missing
+    or unreadable one must release ITS row through the neutral-failure path
+    (bounded retry, reason recorded on the row) while the run keeps working the
+    remaining rows. Before the fix the OSError escaped stage promote and took
+    the entire run down."""
+    conn, storage = instance
+    good = seed_source(conn)
+    broken = Source(id=new_id("src"), ats_type="greenhouse",
+                    tenant_slug="othertenant", origin="curated",
+                    status="enabled")
+    SqliteSourceRegistryRepository(conn).add(broken)
+    SqliteSourceRegistryRepository(conn).set_status(broken.id, "enabled")
+
+    # Run one: poll and gate both sources, no model budget, so two rows wait.
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_extraction_calls=0, judged_fit_k=0))
+    run_once(conn, storage, adapters, config, model)
+    queue = SqlitePromotionQueueRepository(conn)
+    assert {r.state for r in queue.list_rows()} == {"pending_extraction"}
+
+    # Prune the broken source's raw payload the way any cleanup would.
+    snapshot = SqliteSnapshotRepository(conn).list_for_source(broken.id)[0]
+    _prune_raw(storage, snapshot.raw_locator)
+
+    # Run two: no fetching, so nothing rewrites the pruned file.
+    _, adapters2, config2, model2 = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_fetches=0))
+    run = run_once(conn, storage, adapters2, config2, model2)
+
+    assert run.status != "failed"  # the run survived the bad row
+    assert run.failure_json is None
+    by_source = {}
+    for row in queue.list_rows():
+        opp = SqliteOpportunityRepository(conn).get(row.opportunity_id)
+        by_source[opp.source_id] = row
+    assert by_source[good.id].state == "judged"  # the other row was worked
+    broken_row = by_source[broken.id]
+    assert broken_row.state == "pending_extraction"  # bounded retry, not dead
+    assert broken_row.attempts == 1
+    assert broken_row.next_attempt_run_seq is not None
+    assert "unreadable" in broken_row.failure_reason
+    assert "Engineer" not in broken_row.failure_reason  # no posting text
+
+
+def test_a_raw_payload_that_never_returns_exhausts_its_retries(instance):
+    """The neutral path is bounded: repeated unreadable payloads end in the
+    terminal failed state rather than retrying forever."""
+    conn, storage = instance
+    seed_source(conn)
+    _, adapters, config, model = make_env(
+        conn, storage, gh_board(gh_job(1, "Engineer")),
+        budget=Budget(max_extraction_calls=0, judged_fit_k=0))
+    run_once(conn, storage, adapters, config, model)
+    queue = SqlitePromotionQueueRepository(conn)
+    row_id = queue.list_rows()[0].id
+    for snapshot in SqliteSnapshotRepository(conn).list_for_source(
+            SqliteOpportunityRepository(conn).get(
+                queue.get(row_id).opportunity_id).source_id):
+        _prune_raw(storage, snapshot.raw_locator)
+
+    for _ in range(6):
+        _, adapters2, config2, model2 = make_env(
+            conn, storage, gh_board(gh_job(1, "Engineer")),
+            budget=Budget(max_fetches=0))
+        run = run_once(conn, storage, adapters2, config2, model2)
+        assert run.status != "failed"
+        # A retry backoff parks the row for a later run; force it claimable.
+        conn.execute("UPDATE promotion_queue SET next_attempt_run_seq = 0"
+                     " WHERE id = ?", (row_id,))
+        conn.commit()
+        if queue.get(row_id).state == "failed":
+            break
+
+    assert queue.get(row_id).state == "failed"  # terminal, not an endless loop
 
 
 def test_hostile_posting_values_never_appear_unattributed_in_cli(instance):

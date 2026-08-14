@@ -206,6 +206,11 @@ FETCH_ATTEMPT_WORST_S = ((HTTP_MAX_RETRIES + 1) * int(HTTP_TIMEOUT_S)
 # scheduling slop, not uncertainty about the work.
 LEASE_MARGIN_FACTOR = 1.25
 
+# A run row pins ONE exhausted stage (the first refusal). When more than one
+# stage exhausted, the full set is recorded as a run note under this prefix,
+# which the operator surface reads back so no capped stage is hidden.
+EXHAUSTED_STAGES_NOTE = "budget exhausted at stages: "
+
 
 def load_config(storage) -> DiscoveryConfig:
     """Config overrides from the instance's discovery.json (optional); unknown
@@ -376,7 +381,7 @@ class DiscoveryRunner:
             exhausted = sorted(ledger.exhausted_stages)
             if len(exhausted) > 1:
                 self._notes.append(
-                    "budget exhausted at stages: " + ", ".join(exhausted))
+                    EXHAUSTED_STAGES_NOTE + ", ".join(exhausted))
             status = "budget_exhausted" if ledger.exhaustion else "completed"
             stage = ledger.exhaustion.stage if ledger.exhaustion else None
             self._finish(run.id, status, ledger, exhausted_stage=stage)
@@ -933,6 +938,11 @@ class DiscoveryRunner:
             if claimed is None:
                 continue  # released as superseded, never worked (§4)
             try:
+                # Includes the stored-artifact read: raw payloads are prunable
+                # operational data, so a missing or unreadable one is a bad ROW,
+                # not a bad run. It releases neutrally like any other row
+                # failure (bounded retry, terminal failed state) and the run
+                # continues with the remaining rows.
                 posting_json, _ = self._posting_payload(claimed)
                 # Every model call, the schema retry included, is charged
                 # against the budget before it is made.
@@ -946,7 +956,7 @@ class DiscoveryRunner:
                 self._notes.append(f"model unavailable; model stages stopped: {e}")
                 self._release_failed(row_id, "model unavailable", run_seq)
                 return
-            except (ModelCallError, StageOutputError, ValueError) as e:
+            except (ModelCallError, StageOutputError, ValueError, OSError) as e:
                 self._release_failed(row_id, _neutral_reason(e), run_seq)
                 continue
             self._checkpoint()  # the model call may have outlived the lease
@@ -1007,6 +1017,8 @@ class DiscoveryRunner:
             if claimed is None:
                 continue
             try:
+                # Same stored-artifact read as extraction: an unreadable raw
+                # payload releases this row neutrally, never the whole run.
                 posting_json, proposals = self._posting_payload(claimed)
                 requirements = tuple(proposals.get("requirements", []))
                 # Charged per call, retry included; the row transitions only
@@ -1022,7 +1034,7 @@ class DiscoveryRunner:
                 self._notes.append(f"model unavailable; model stages stopped: {e}")
                 self._release_failed(row_id, "model unavailable", run_seq)
                 return
-            except (ModelCallError, StageOutputError, ValueError) as e:
+            except (ModelCallError, StageOutputError, ValueError, OSError) as e:
                 self._release_failed(row_id, _neutral_reason(e), run_seq)
                 continue
             self._checkpoint()  # the model call may have outlived the lease
@@ -1167,6 +1179,9 @@ def _neutral_reason(error) -> str:
         return f"output failed validation: {error}"
     if isinstance(error, ModelCallError):
         return "model call failed operationally"
+    if isinstance(error, OSError):
+        # OS-written message (errno plus a path we minted), never posting text.
+        return f"stored payload unreadable: {error}"
     return f"stage failed: {error}"
 
 
