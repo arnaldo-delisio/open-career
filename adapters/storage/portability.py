@@ -15,6 +15,7 @@ from pathlib import Path
 
 from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import MIGRATIONS_DIR, migrate, pending_migrations
+from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.sqlite_edges import ENTITY_TABLES
 from domain.edges import EDGE_VOCABULARY, UNKNOWN_TYPE
 from domain.policies import CANONICAL_POLICY_KEYS, validate_policy_value
@@ -38,7 +39,7 @@ def export_db(db: Path) -> dict:
     migration version, so every successful export is accepted by import."""
     if not db.exists():
         raise ValueError("instance not initialized (run: open-career init)")
-    conn = sqlite3.connect(db)
+    conn = sqlite_connect(db)
     conn.row_factory = sqlite3.Row
     try:
         if pending_migrations(conn, MIGRATIONS_DIR):
@@ -127,8 +128,7 @@ def import_db(db: Path, dump: dict) -> None:
     # (migrate first, with its standard pre-upgrade backup).
     try:
         migrate(db)
-        conn = sqlite3.connect(db)
-        conn.execute("PRAGMA foreign_keys = ON")
+        conn = sqlite_connect(db)
     except sqlite3.Error as e:
         raise ValueError(f"cannot open instance database: {e}") from e
     try:
@@ -375,7 +375,7 @@ def import_archive(db: Path, instance_root: Path, src: Path) -> None:
 def _copy_db(src: Path, dst: Path) -> None:
     """Copy a database with SQLite's own backup API (a file copy can silently
     omit rows living in the write-ahead log)."""
-    src_conn = sqlite3.connect(src)
+    src_conn = sqlite_connect(src)
     try:
         dst_conn = sqlite3.connect(dst)
         try:

@@ -740,6 +740,41 @@ def test_show_unknown_opportunity_fails_cleanly(instance, capsys):
     assert "unknown opportunity" in capsys.readouterr().err
 
 
+def test_runs_command_shows_why_an_aborted_run_died(instance, capsys):
+    """Drive defect: the operator saw `database is locked` in the terminal
+    while the persisted record said only that something unexpected happened.
+    Run history now names the failure, in human and JSON form alike."""
+    from adapters.storage.sqlite_discovery import SqliteDiscoveryRunRepository
+    from domain.budget import Budget
+
+    conn = connect(instance)
+    runs = SqliteDiscoveryRunRepository(conn)
+    run = runs.start(Budget().to_json(), epoch=0)
+    runs.finish(run.id, "failed", json.dumps({"fetch": 888}),
+                json.dumps({"sources": {}, "notes": []}),
+                failure_json=json.dumps({
+                    "error_type": "OperationalError",
+                    "error_message": "database is locked",
+                    "stage": "poll", "source_id": "src_acme"}))
+    conn.close()
+
+    main(["discover", "runs"])
+    out = capsys.readouterr().out
+    assert "failed" in out
+    assert "OperationalError: database is locked" in out
+    assert "stage poll" in out and "source src_acme" in out
+
+    main(["discover", "runs", "--json"])
+    view = json.loads(capsys.readouterr().out)[0]
+    assert view["failure"]["error_message"] == "database is locked"
+    assert view["failure"]["stage"] == "poll"
+
+
+def test_runs_command_with_no_runs_says_so(instance, capsys):
+    main(["discover", "runs"])
+    assert "no discovery runs yet" in capsys.readouterr().out
+
+
 def test_cli_source_never_speaks_ghost_verdicts():
     """OC-13 as a regression: no ghost label, score, or threshold wording in
     the discover CLI surface."""

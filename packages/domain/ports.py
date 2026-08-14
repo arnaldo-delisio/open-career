@@ -578,7 +578,8 @@ class DiscoveryRunRepository(ABC):
 
     @abstractmethod
     def finish(self, run_id: str, status: str, spend_json: str,
-               source_outcomes_json: str, exhausted_stage: str | None = None) -> None: ...
+               source_outcomes_json: str, exhausted_stage: str | None = None,
+               failure_json: str | None = None) -> None: ...
 
     @abstractmethod
     def reconcile_abandoned(self) -> list[str]:

@@ -397,3 +397,47 @@ def test_0009_rebuilds_discovery_runs_on_a_populated_database(tmp_path):
                     " VALUES ('sn3', 's1', 3, 'l', 'h', '{}', 0, 'nope')")
     finally:
         conn.close()
+
+
+def test_0011_adds_run_failure_json_preserving_rows(tmp_path):
+    """The aborted-run diagnostic column (0011) lands on a populated
+    discovery_runs table: existing rows survive with the new column NULL, a
+    JSON diagnostic is accepted, and non-JSON is refused."""
+    import shutil
+
+    db = tmp_path / "test.sqlite3"
+    pre = tmp_path / "pre0011"
+    pre.mkdir()
+    for f in MIGRATIONS_DIR.glob("[0-9]*.sql"):
+        if not f.name.startswith("0011"):
+            shutil.copy(f, pre)
+    migrate(db, migrations_dir=pre)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    with conn:
+        conn.execute("INSERT INTO discovery_runs (id, run_seq, status,"
+                     " budget_json, epoch) VALUES ('run_1', 1, 'completed',"
+                     " '{}', 0)")
+    conn.close()
+
+    assert "0011" in migrate(db)
+
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        assert conn.execute("SELECT status, failure_json FROM discovery_runs"
+                            " WHERE id = 'run_1'").fetchone() \
+            == ("completed", None)
+        with conn:
+            conn.execute("INSERT INTO discovery_runs (id, run_seq, status,"
+                         " budget_json, epoch, failure_json) VALUES ('run_2',"
+                         " 2, 'failed', '{}', 0,"
+                         " '{\"error_type\": \"OperationalError\"}')")
+        with pytest.raises(sqlite3.IntegrityError):
+            with conn:
+                conn.execute("INSERT INTO discovery_runs (id, run_seq, status,"
+                             " budget_json, epoch, failure_json) VALUES"
+                             " ('run_3', 3, 'failed', '{}', 0, 'not json')")
+    finally:
+        conn.close()

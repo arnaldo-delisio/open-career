@@ -92,23 +92,47 @@ def test_profile_set_rejects_bad_email_with_one_line(instance, capsys):
 
 def test_locked_db_gets_operational_wording_not_invalid_instance(instance, monkeypatch, capsys):
     """A locked database is a database operation failure, not an invalid
-    instance: the wording must not tell the user their data is malformed."""
-    real_connect = sqlite3.connect
-    monkeypatch.setattr("apps.cli.main.sqlite3.connect",
-                        lambda path: real_connect(path, timeout=0.05))
-    holder = sqlite3.connect(instance / "open-career.sqlite3")
-    try:
-        holder.execute("BEGIN EXCLUSIVE")
-        with pytest.raises(SystemExit) as exc:
-            main(["edges", "list"])
-    finally:
-        holder.rollback()
-        holder.close()
+    instance: the wording must not tell the user their data is malformed.
+    (WAL means a reader is no longer blocked by a writer at all, so the
+    locked error is raised at the connection boundary here.)"""
+    def locked(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("apps.cli.main.sqlite_connect", locked)
+    with pytest.raises(SystemExit) as exc:
+        main(["edges", "list"])
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert err.startswith("database operation failed: database is locked")
     assert "does not look like a valid open-career instance" not in err
     assert "Traceback" not in err
+
+
+def test_instance_connections_are_wal_and_readers_are_not_blocked(instance, capsys):
+    """Defect 3: the instance database runs in WAL with a busy timeout, so a
+    second session holding a write transaction no longer aborts other work.
+    WAL is verified in effect, never assumed."""
+    from adapters.storage.sqlite_conn import BUSY_TIMEOUT_MS, connect, journal_mode
+
+    db = instance / "open-career.sqlite3"
+    conn = connect(db)
+    try:
+        assert journal_mode(conn) == "wal"
+        assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == BUSY_TIMEOUT_MS
+        writer = connect(db)
+        try:
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("INSERT INTO schema_migrations (version)"
+                           " VALUES ('9999_write_lock_holder')")
+            # The reader runs to completion while the writer holds its
+            # transaction: this is the contention that killed a 54 minute run.
+            main(["edges", "list"])
+        finally:
+            writer.rollback()
+            writer.close()
+    finally:
+        conn.close()
+    assert "Traceback" not in capsys.readouterr().err
 
 
 def test_invalid_instance_shape_is_one_line_error(tmp_path, monkeypatch, capsys):
@@ -124,4 +148,20 @@ def test_invalid_instance_shape_is_one_line_error(tmp_path, monkeypatch, capsys)
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert err.startswith("this does not look like a valid open-career instance (")
+    assert "Traceback" not in err
+
+
+def test_a_database_without_wal_fails_with_one_line_not_a_traceback(instance,
+                                                                    monkeypatch,
+                                                                    capsys):
+    """Codex r5: refusing a database that cannot do WAL is an operational
+    error at every surface, not an uncaught traceback."""
+    from adapters.storage import sqlite_conn
+
+    monkeypatch.setattr(sqlite_conn, "apply_pragmas", lambda _conn: "delete")
+    with pytest.raises(SystemExit) as exc:
+        main(["edges", "list"])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert err.startswith("database operation failed: WAL journal mode did not")
     assert "Traceback" not in err

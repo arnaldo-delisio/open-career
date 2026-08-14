@@ -10,15 +10,21 @@ callers reference the same locators in their outcome records.
 from domain.ids import new_id
 
 
-def probe_source(storage, adapter, source_id: str,
-                 tenant_slug: str) -> tuple[bool, list[str]]:
+def probe_source(storage, adapter, source_id: str, tenant_slug: str,
+                 checkpoint=None) -> tuple[bool, list[str]]:
     """Run one healthcheck through the adapter with per-attempt raw capture.
-    Returns (passed, captured body locators)."""
+    Returns (passed, captured body locators).
+
+    checkpoint, when given, runs before each received body is stored: the
+    default healthcheck delegates to poll, which paginates, so a probe holds
+    the lease exactly as long as a poll does and renews it the same way."""
     fetcher = getattr(adapter, "_fetcher", None)
     attempt_id = new_id("att")
     captured: list[str] = []
 
     def capture(body: bytes, status) -> None:
+        if checkpoint is not None:
+            checkpoint()
         locator = (f"discovery/raw/{source_id}/{attempt_id}"
                    f"/response-{len(captured) + 1:04d}.json")
         storage.write_bytes_new(locator, body)

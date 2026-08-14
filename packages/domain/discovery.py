@@ -223,6 +223,9 @@ class DiscoveryRun:
     source_outcomes_json: str | None = None
     started_at: str | None = None
     finished_at: str | None = None
+    # Set only on an aborted run: the exception type and message, plus the
+    # stage and source id when known (§4).
+    failure_json: str | None = None
 
 
 @dataclass(frozen=True)

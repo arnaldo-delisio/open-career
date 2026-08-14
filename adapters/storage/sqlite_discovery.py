@@ -201,7 +201,8 @@ class SqliteSnapshotRepository(SnapshotRepository):
 
 
 _RUN_COLUMNS = ("id, run_seq, status, budget_json, epoch, exhausted_stage,"
-                " spend_json, source_outcomes_json, started_at, finished_at")
+                " spend_json, source_outcomes_json, started_at, finished_at,"
+                " failure_json")
 
 
 class SqliteDiscoveryRunRepository(DiscoveryRunRepository):
@@ -247,7 +248,11 @@ class SqliteDiscoveryRunRepository(DiscoveryRunRepository):
         return ids
 
     def finish(self, run_id: str, status: str, spend_json: str,
-               source_outcomes_json: str, exhausted_stage: str | None = None) -> None:
+               source_outcomes_json: str, exhausted_stage: str | None = None,
+               failure_json: str | None = None) -> None:
+        """failure_json carries the diagnostic for an aborted run (exception
+        type and message, plus the stage and source it died on): the persisted
+        record says what the operator's terminal said."""
         if status not in ("completed", "budget_exhausted", "failed"):
             raise ValueError(f"unknown terminal run status '{status}'")
         with self._conn:
@@ -258,9 +263,11 @@ class SqliteDiscoveryRunRepository(DiscoveryRunRepository):
             self._conn.execute(
                 "UPDATE discovery_runs SET status = ?, spend_json = ?,"
                 " source_outcomes_json = ?, exhausted_stage = ?,"
+                " failure_json = ?,"
                 " finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')"
                 " WHERE id = ? AND status = 'running'",
-                (status, spend_json, source_outcomes_json, exhausted_stage, run_id))
+                (status, spend_json, source_outcomes_json, exhausted_stage,
+                 failure_json, run_id))
 
     def get(self, run_id: str) -> DiscoveryRun | None:
         row = self._conn.execute(

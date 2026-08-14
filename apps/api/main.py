@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from fastapi import Depends, FastAPI, HTTPException
 
 from adapters.storage.instance import db_path
+from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from domain.ports import CareerEdgeRepository
 
@@ -19,7 +20,13 @@ def get_edge_repository() -> Iterator[CareerEdgeRepository]:
     path = db_path()
     if not path.exists():
         raise HTTPException(status_code=503, detail="instance not initialized (run: open-career init)")
-    conn = sqlite3.connect(path)
+    try:
+        conn = sqlite_connect(path)
+    except sqlite3.OperationalError as e:
+        # A database that cannot be opened under the application's own
+        # requirements (WAL refused, locked, unreadable) is an operational
+        # unavailability with its own actionable message, never a bare 500.
+        raise HTTPException(status_code=503, detail=f"database unavailable: {e}")
     try:
         yield SqliteCareerEdgeRepository(conn)
     finally:

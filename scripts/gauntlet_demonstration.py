@@ -57,6 +57,7 @@ sys.path.insert(0, str(_REPO))
 sys.path.insert(0, str(_REPO / "packages"))
 
 from adapters.render.pdftext import PopplerPdfTextExtractor      # noqa: E402
+from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.local import LocalStorageAdapter           # noqa: E402
 from adapters.storage.migrations import migrate                  # noqa: E402
 from adapters.storage.sqlite_packages import SqlitePackageRepository  # noqa: E402
@@ -352,8 +353,7 @@ def seed_bundle(instance: Path, bundle: Path) -> tuple[sqlite3.Connection, str]:
     bundle, seeded through the repository's own lifecycle path."""
     db = instance / "open-career.sqlite3"
     migrate(db)
-    conn = sqlite3.connect(db)
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = sqlite_connect(db)
     hashes = json.loads((bundle / "hashes.json").read_text())
     with conn:
         conn.execute("INSERT INTO role_families (id, name, rationale)"
@@ -384,8 +384,7 @@ def heartbeat_repo_factory(db_path: Path):
 
     @contextmanager
     def factory():
-        conn = sqlite3.connect(db_path)
-        conn.execute("PRAGMA foreign_keys = ON")
+        conn = sqlite_connect(db_path)
         try:
             yield SqlitePackageRepository(conn)
         finally:

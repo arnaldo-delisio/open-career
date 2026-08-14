@@ -66,6 +66,9 @@ def run_run(conn, storage, model, say, as_json: bool = False) -> None:
         return
     say(f"run {run.id} {run.status}{_exhaustion_note(run)}")
     say(f"spend: {run.spend_json}")
+    failure = _failure_note(run)
+    if failure:
+        say(failure)
 
 
 def _exhaustion_note(run) -> str:
@@ -83,6 +86,39 @@ def _exhaustion_note(run) -> str:
         return (f" (max_total_model_calls is 0; nothing attempted at the"
                 f" {run.exhausted_stage} stage)")
     return f" (exhausted at {run.exhausted_stage})"
+
+
+def _failure_note(run) -> str | None:
+    """What an aborted run died of, in the operator's own view: the persisted
+    exception type and message, plus where it happened."""
+    if not run.failure_json:
+        return None
+    failure = json.loads(run.failure_json)
+    where = [part for part in (
+        f"stage {failure['stage']}" if failure.get("stage") else None,
+        f"source {failure['source_id']}" if failure.get("source_id") else None,
+    ) if part]
+    location = f" ({', '.join(where)})" if where else ""
+    return (f"failure: {failure.get('error_type')}:"
+            f" {failure.get('error_message')}{location}")
+
+
+def run_runs_list(conn, say, as_json: bool = False, limit: int = 20) -> None:
+    """Recent run history, newest first: how each run ended, and for an
+    aborted one what it died of (the diagnostic the run row persists)."""
+    runs = SqliteDiscoveryRunRepository(conn).list_all()[-limit:][::-1]
+    if as_json:
+        say(json.dumps([_run_view(r) for r in runs], indent=2))
+        return
+    if not runs:
+        say("no discovery runs yet")
+        return
+    for run in runs:
+        say(f"{run.run_seq}  {run.id}  {run.status}{_exhaustion_note(run)}"
+            f"  started {run.started_at}  finished {run.finished_at or '-'}")
+        failure = _failure_note(run)
+        if failure:
+            say(f"    {failure}")
 
 
 def run_recover(conn, say) -> None:
@@ -124,6 +160,7 @@ def _run_view(run) -> dict:
         "source_outcomes": json.loads(run.source_outcomes_json)
         if run.source_outcomes_json else None,
         "epoch": run.epoch,
+        "failure": json.loads(run.failure_json) if run.failure_json else None,
         "started_at": run.started_at, "finished_at": run.finished_at,
     }
 

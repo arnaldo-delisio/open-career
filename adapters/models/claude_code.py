@@ -9,6 +9,12 @@ import subprocess
 from domain.ports import ModelAdapter, ModelUnavailableError
 
 
+# The wall-clock bound one model call is held to. The discovery lease
+# relationship (workers/discovery/run.py) is computed from this number, so it
+# is a constant here rather than a caller's choice.
+DEFAULT_TIMEOUT_SECONDS = 600
+
+
 class ModelCallError(RuntimeError):
     """One model call failed operationally (timeout, crash, malformed
     envelope). The backend itself may still be usable; callers can degrade
@@ -16,13 +22,21 @@ class ModelCallError(RuntimeError):
 
 
 class ClaudeCodeAdapter(ModelAdapter):
-    def __init__(self, command: str = "claude", timeout_seconds: int = 600, run=None):
+    def __init__(self, command: str = "claude",
+                 timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS, run=None):
         self._command = command
         self._timeout_seconds = timeout_seconds
         # Injectable for tests (never call the real CLI in the suite); resolved
         # at call time so monkeypatching subprocess.run also works.
         self._run = run
         self._provider_version: str | None = None
+
+    @property
+    def call_timeout_s(self) -> int:
+        """The wall-clock bound one call is held to. Read by callers whose own
+        timing depends on it (the discovery lease relationship), so an
+        injected non-default timeout cannot silently invalidate it."""
+        return self._timeout_seconds
 
     def complete(self, prompt: str) -> str:
         return self._complete_envelope(prompt)["result"]

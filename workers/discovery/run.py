@@ -10,10 +10,21 @@ proposed action defaults to IGNORE/MONITOR (OC-23); nothing here pursues.
 """
 
 import json
+import sqlite3
+import time
 from dataclasses import dataclass, field, replace
 
+from adapters.models.claude_code import (
+    DEFAULT_TIMEOUT_SECONDS as MODEL_TIMEOUT_SECONDS,
+)
 from adapters.models.claude_code import ModelCallError
 from adapters.sources.base import AdapterDegradedError, OversizedFeedError
+from adapters.sources.http import (
+    DEFAULT_MAX_RETRIES as HTTP_MAX_RETRIES,
+)
+from adapters.sources.http import (
+    DEFAULT_TIMEOUT_S as HTTP_TIMEOUT_S,
+)
 from adapters.sources.http import FetchError, RefusedHostError
 from adapters.storage.sqlite_discovery import (
     SqliteDependencyEpochRepository,
@@ -31,6 +42,7 @@ from adapters.storage.sqlite_opportunities import (
     SqliteOpportunityRepository,
     SqlitePromotionQueueRepository,
 )
+from adapters.storage.sqlite_conn import retry_on_locked
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
 from domain.budget import Budget, BudgetLedger
@@ -66,7 +78,10 @@ from prompts import load_prompt
 from workers.discovery.probe import probe_source
 
 CONFIG_FILENAME = "discovery.json"
-LEASE_SECONDS = 3600
+
+# Persisted failure messages are our own exception text, kept bounded so one
+# pathological message cannot bloat the run row.
+_FAILURE_MESSAGE_MAX = 500
 
 
 class LeaseLostError(RuntimeError):
@@ -137,6 +152,19 @@ class DiscoveryConfig:
     probe_backoff_base_days: int = 1
     probe_backoff_cap_days: int = 30
     disabled_reprobe_days: int = 30
+    # Lease liveness is TTL only, so the TTL is also how long an interrupted
+    # run blocks the next one. The two numbers are one design: the TTL must
+    # cover the renewal interval PLUS the longest gap between two checkpoints,
+    # with margin, and load_config enforces the relationship so changing one
+    # number forces thought about the other.
+    #
+    # The gaps are bounded by real timeouts, not estimates. A paginated poll
+    # checkpoints per page, so the poll gap is one page attempt chain
+    # (fetch_attempt_worst_s, covering the fetcher's retries and backoff) plus
+    # the per-host wait, not the whole poll. The long pole is therefore one
+    # model call plus its schema retry: 2 * model_call_timeout_s.
+    lease_ttl_s: int = 1800
+    lease_renew_interval_s: int = 60
 
     def to_json(self) -> str:
         record = json.loads(self.budget.to_json())
@@ -147,8 +175,36 @@ class DiscoveryConfig:
             "probe_backoff_base_days": self.probe_backoff_base_days,
             "probe_backoff_cap_days": self.probe_backoff_cap_days,
             "disabled_reprobe_days": self.disabled_reprobe_days,
+            "lease_ttl_s": self.lease_ttl_s,
+            "lease_renew_interval_s": self.lease_renew_interval_s,
+            "model_call_timeout_s": MODEL_CALL_TIMEOUT_S,
+            "fetch_attempt_worst_s": FETCH_ATTEMPT_WORST_S,
         })
         return json.dumps(record, sort_keys=True)
+
+    def worst_checkpoint_gap_s(self) -> int:
+        """The longest stretch between two checkpoints these numbers allow:
+        the renewal throttle plus whichever bounded operation runs longest
+        between checkpoints (one model call with its schema retry, or one page
+        attempt chain in a poll)."""
+        page_gap = self.budget.per_host_min_interval_s + FETCH_ATTEMPT_WORST_S
+        model_gap = 2 * MODEL_CALL_TIMEOUT_S  # the call and its schema retry
+        return self.lease_renew_interval_s + max(page_gap, model_gap)
+
+
+# The two bounded operations a run holds between checkpoints, taken from the
+# code that enforces them rather than restated as config a caller could set
+# without effect: one model call (adapters/models/claude_code.py) and one page
+# attempt chain (adapters/sources/http.py: max_retries + 1 requests at the
+# request timeout, plus the 2/4/8s backoff between them).
+MODEL_CALL_TIMEOUT_S = MODEL_TIMEOUT_SECONDS
+FETCH_ATTEMPT_WORST_S = ((HTTP_MAX_RETRIES + 1) * int(HTTP_TIMEOUT_S)
+                         + sum(2 ** i for i in range(1, HTTP_MAX_RETRIES + 1)))
+
+# The TTL must be at least this multiple of the worst checkpoint gap. The gap
+# is built from hard timeouts rather than estimates, so the margin covers
+# scheduling slop, not uncertainty about the work.
+LEASE_MARGIN_FACTOR = 1.25
 
 
 def load_config(storage) -> DiscoveryConfig:
@@ -200,9 +256,30 @@ def load_config(storage) -> DiscoveryConfig:
             # a poll admit against a zero fetch budget (or forbid every poll).
             raise ValueError(
                 f"{CONFIG_FILENAME} key '{key}' must be at least 1, got {value}")
+        if key in ("lease_ttl_s", "lease_renew_interval_s") and value < 1:
+            raise ValueError(
+                f"{CONFIG_FILENAME} key '{key}' must be at least 1, got {value}")
     budget = Budget(**{k: v for k, v in overrides.items() if k in budget_fields})
-    return DiscoveryConfig(budget=budget, **{
+    config = DiscoveryConfig(budget=budget, **{
         k: v for k, v in overrides.items() if k in config_fields})
+    required = int(LEASE_MARGIN_FACTOR * config.worst_checkpoint_gap_s())
+    if config.lease_ttl_s < required:
+        # Stated as the relationship, not as a magic number: a shorter TTL is
+        # the point (an interrupted run blocks the next one for exactly this
+        # long), but it must still outlast the longest gap between two
+        # checkpoints by the stated margin.
+        raise ValueError(
+            f"{CONFIG_FILENAME} key 'lease_ttl_s' must be at least"
+            f" {required} with these numbers ({LEASE_MARGIN_FACTOR}x the worst"
+            f" gap between lease renewals: lease_renew_interval_s"
+            f" {config.lease_renew_interval_s} plus the longest bounded"
+            f" operation between checkpoints, either a model call and its"
+            f" retry (2 x the model call timeout {MODEL_CALL_TIMEOUT_S}s) or"
+            f" one page attempt chain (per_host_min_interval_s"
+            f" {config.budget.per_host_min_interval_s} plus the fetcher's"
+            f" bounded attempts, {FETCH_ATTEMPT_WORST_S}s)),"
+            f" got {config.lease_ttl_s}")
+    return config
 
 
 def _db_now(conn, days_ahead: int = 0) -> str:
@@ -228,6 +305,11 @@ class DiscoveryRunner:
         self._epoch_repo = SqliteDependencyEpochRepository(conn)
         self._outcomes: dict = {}
         self._notes: list[str] = []
+        self._last_renew_at: float | None = None
+        # Where the run is, recorded so an abort names the stage and (when a
+        # source is being worked) the source it died on.
+        self._stage: str | None = None
+        self._current_source_id: str | None = None
         self._model_available = True
         # Opportunities whose material version changed this run: their gate
         # verdict re-evaluates like an epoch bump does (§3/§5).
@@ -238,65 +320,136 @@ class DiscoveryRunner:
     def run(self):
         """One budgeted run. Returns the finished DiscoveryRun, or None when
         the singleton lease is held by another run."""
+        # Checked before anything is claimed: a refused configuration must not
+        # leave a lease held behind it.
+        self._check_model_timeout_fits_the_lease()
         self._lease = SqliteDiscoveryLease(self._conn)
         self._owner = new_id("dlease")
-        self._fence = self._lease.acquire(self._owner, LEASE_SECONDS)
+        self._fence = retry_on_locked(
+            lambda: self._lease.acquire(self._owner, self._config.lease_ttl_s))
         if self._fence is None:
             self._say("another discovery run holds the lease; nothing ran")
             return None
-        epoch = self._epoch_repo.current()
-        # Holding the lease, any run row still 'running' whose own lease
-        # ownership no longer holds is provably abandoned (§4): reconcile it
-        # before starting, so run history stops reporting phantom live runs.
-        self._runs.reconcile_abandoned()
-        ledger = BudgetLedger(self._config.budget)
-        run = self._runs.start(self._config.to_json(), epoch,
-                               lease_owner=self._owner, lease_fence=self._fence)
+        # Everything past a successful acquisition runs under the release:
+        # a failure while reading the epoch, reconciling, or starting the run
+        # row would otherwise strand the lease until its TTL expired, blocking
+        # every later run for no reason.
         try:
-            # Exhaustion stops the stages that share the exhausted budget, and
-            # only those (§4). Probe and fetch are separate locked budgets, so
-            # an exhausted probe budget stops probing and nothing else: the run
-            # continues into poll, gate and promote. Fetch exhaustion still
-            # stops the model stages and extraction exhaustion still stops
-            # judgment, the deliberately conservative rule protecting real
-            # spend.
+            epoch = retry_on_locked(self._epoch_repo.current)
+            # Holding the lease, any run row still 'running' whose own lease
+            # ownership no longer holds is provably abandoned (§4): reconcile
+            # it before starting, so run history stops reporting phantom live
+            # runs.
+            retry_on_locked(self._runs.reconcile_abandoned)
+            ledger = BudgetLedger(self._config.budget)
+            run = retry_on_locked(lambda: self._runs.start(
+                self._config.to_json(), epoch,
+                lease_owner=self._owner, lease_fence=self._fence))
+        except Exception:
+            try:  # the original failure is what propagates, released or not
+                retry_on_locked(lambda: self._lease.release(self._owner))
+            except sqlite3.Error:
+                self._say("discovery lease could not be released after a failed"
+                          " start; it expires with its TTL")
+            raise
+        try:
+            # A stage runs when ITS OWN budget permits (§4). Exhausting one
+            # stage's budget says nothing about another's, so it never stops
+            # another stage: probe exhaustion stops probing, fetch exhaustion
+            # stops polling, and the deterministic free gate still runs on
+            # whatever backlog is already observed. The model stages are
+            # bounded by their own caps (max_extraction_calls, judged_fit_k,
+            # max_total_model_calls), which is what protects real spend. What
+            # remains between stages is the data dependency, and it resolves
+            # itself: extraction consumes gate survivors, judgment consumes
+            # extracted rows.
+            self._stage = "probe"
             self._probe(ledger)
+            self._stage = "poll"
             self._poll(ledger, run)
-            if not ledger.exhausted("fetch"):
-                self._gate(ledger, epoch, run)
-                if not ledger.exhausted("gate"):
-                    self._promote(ledger, epoch, run)
+            self._stage = "gate"
+            self._current_source_id = None
+            self._gate(ledger, epoch, run)
+            self._stage = "promote"
+            self._promote(ledger, epoch, run)
+            self._stage = None
             exhausted = sorted(ledger.exhausted_stages)
             if len(exhausted) > 1:
                 self._notes.append(
                     "budget exhausted at stages: " + ", ".join(exhausted))
             status = "budget_exhausted" if ledger.exhaustion else "completed"
             stage = ledger.exhaustion.stage if ledger.exhaustion else None
-            self._runs.finish(run.id, status, ledger.spend_json(),
-                              self._outcomes_json(), exhausted_stage=stage)
+            self._finish(run.id, status, ledger, exhausted_stage=stage)
         except LeaseLostError as e:
             # A clean stop: everything already committed stays; nothing more
             # mutates under a lease another owner may hold.
             self._notes.append(str(e))
-            self._runs.finish(run.id, "failed", ledger.spend_json(),
-                              self._outcomes_json())
-        except Exception:
-            self._notes.append("run aborted by an unexpected error")
-            self._runs.finish(run.id, "failed", ledger.spend_json(),
-                              self._outcomes_json())
+            self._finish(run.id, "failed", ledger, failure=e)
+        except Exception as e:
+            # The persisted record says what the operator's terminal said: a
+            # bare "aborted" cannot tell a transient lock from a bug.
+            self._notes.append(f"run aborted: {_failure_summary(e)}")
+            self._finish(run.id, "failed", ledger, failure=e)
             raise
         finally:
-            self._lease.release(self._owner)
+            retry_on_locked(lambda: self._lease.release(self._owner))
         return self._runs.get(run.id)
 
+    def _check_model_timeout_fits_the_lease(self) -> None:
+        """The lease relationship is validated against the model adapter's
+        default timeout, so an adapter injected with a longer one would hold
+        the lease past a gap the TTL was never approved for. An adapter that
+        declares its bound is checked against the numbers actually in force."""
+        declared = getattr(self._model, "call_timeout_s", MODEL_CALL_TIMEOUT_S)
+        gap = self._config.lease_renew_interval_s + 2 * int(declared)
+        if self._config.lease_ttl_s < LEASE_MARGIN_FACTOR * gap:
+            raise ValueError(
+                f"the model adapter's call timeout ({declared}s) needs a"
+                f" lease_ttl_s of at least {int(LEASE_MARGIN_FACTOR * gap)},"
+                f" but the locked config has {self._config.lease_ttl_s};"
+                " raise the TTL or lower the adapter timeout")
+
+    def _finish(self, run_id: str, status: str, ledger: BudgetLedger,
+                exhausted_stage: str | None = None,
+                failure: BaseException | None = None) -> None:
+        """The terminal write, retried on contention: a lock at the very end
+        must not be the reason a finished run keeps reporting 'running'. The
+        conditional update inside finish still refuses to overwrite a row a
+        successor already reconciled."""
+        retry_on_locked(lambda: self._runs.finish(
+            run_id, status, ledger.spend_json(), self._outcomes_json(),
+            exhausted_stage=exhausted_stage,
+            failure_json=None if failure is None else self._failure_json(failure)))
+
     def _checkpoint(self) -> None:
-        """Renew the lease and re-check owner and fence before each persistent
-        transition (the package pipeline's discipline); a failed renewal
-        terminates the run cleanly before the next mutation."""
-        if not self._lease.renew(self._owner, self._fence, LEASE_SECONDS):
+        """Re-check owner and fence before each persistent transition (the
+        package pipeline's discipline), renewing the lease at most once per
+        lease_renew_interval_s; a lost lease terminates the run cleanly before
+        the next mutation. Inside the renewal interval the ownership check is
+        the same test, read-only, so the ownership guarantee is unchanged and
+        only the renewal write is throttled."""
+        now = time.monotonic()
+        within_interval = (self._last_renew_at is not None
+                           and now - self._last_renew_at
+                           < self._config.lease_renew_interval_s)
+        if within_interval and self._lease.held_by(self._owner, self._fence):
+            return
+        if not retry_on_locked(lambda: self._lease.renew(
+                self._owner, self._fence, self._config.lease_ttl_s)):
             raise LeaseLostError(
                 "discovery lease lost (expired or claimed by another owner);"
                 " run stopped before its next mutation")
+        self._last_renew_at = time.monotonic()
+
+    def _failure_json(self, error: BaseException) -> str:
+        """The persisted diagnostic for an aborted run: the exception type and
+        a message that is safe to persist, plus where it happened."""
+        return json.dumps({
+            "error_type": type(error).__name__,
+            "error_message": _persisted_failure_message(error),
+            "stage": self._stage,
+            "source_id": self._current_source_id,
+        }, sort_keys=True)
 
     def _fenced(self):
         """An explicit transaction whose FIRST read re-verifies owner, fence,
@@ -305,6 +458,16 @@ class DiscoveryRunner:
         connection repositories run over."""
         return _FencedTransaction(self._conn, self._lease, self._owner,
                                   self._fence)
+
+    def _fenced_write(self, body):
+        """One fenced transaction, retried whole while another connection
+        holds the database locked (§7). The transaction rolls back completely
+        on any failure, so a retry re-runs body from a clean state; body must
+        therefore do database writes only, never mutate run state."""
+        def attempt():
+            with self._fenced() as proxy:
+                return body(proxy)
+        return retry_on_locked(attempt)
 
     def _outcomes_json(self) -> str:
         return json.dumps({"sources": self._outcomes, "notes": self._notes},
@@ -324,20 +487,23 @@ class DiscoveryRunner:
         for source in due:
             if not ledger.try_spend("probe"):
                 return
+            self._current_source_id = source.id
             self._checkpoint()  # lease re-checked before each probe lands
             adapter = self._adapters[source.ats_type]
             # The shared probe service (workers/discovery/probe.py): every
             # received body persists before parsing, evidence for enabled and
             # failed probes alike; the CLI enable path uses the same service.
             ok, captured = probe_source(self._storage, adapter, source.id,
-                                        source.tenant_slug)
+                                        source.tenant_slug,
+                                        checkpoint=self._checkpoint)
             backoff_days = min(
                 self._config.probe_backoff_cap_days,
                 self._config.probe_backoff_base_days * (2 ** source.probe_attempts))
-            with self._fenced() as proxy:
-                SqliteSourceRegistryRepository(proxy).record_probe_outcome(
+            self._fenced_write(
+                lambda proxy: SqliteSourceRegistryRepository(proxy)
+                .record_probe_outcome(
                     source.id, ok,
-                    next_probe_at=None if ok else _db_now(self._conn, backoff_days))
+                    next_probe_at=None if ok else _db_now(self._conn, backoff_days)))
             entry = self._outcomes.setdefault(source.id, {})
             entry["probe"] = "enabled" if ok else "failed"
             if captured:
@@ -380,9 +546,9 @@ class DiscoveryRunner:
                 continue
             self._poll_source(source, ledger, run)
         for source in still_deferred:
-            with self._fenced() as proxy:
-                SqliteSourceRegistryRepository(proxy).record_poll_outcome(
-                    source.id, "deferred")
+            self._fenced_write(
+                lambda proxy, source=source: SqliteSourceRegistryRepository(proxy)
+                .record_poll_outcome(source.id, "deferred"))
             self._outcomes.setdefault(source.id, {})["poll"] = "deferred"
         if still_deferred:
             # A due source refused admission for budget IS fetch exhaustion:
@@ -400,6 +566,7 @@ class DiscoveryRunner:
         """One admitted poll: fetch all pages (an in-flight poll may finish
         past the run cap, §1), commit the snapshot atomically, mint and
         version opportunities, apply the closure plan. Returns pages spent."""
+        self._current_source_id = source.id
         self._checkpoint()  # lease re-checked before this poll's mutations
         adapter = self._adapters[source.ats_type]
         outcome = self._outcomes.setdefault(source.id, {})
@@ -430,6 +597,10 @@ class DiscoveryRunner:
         page_locators: list[str] = []  # the 2xx feed pages only
 
         def capture(body: bytes, status) -> None:
+            # Every received page renews the lease, so a large paginated poll
+            # is a sequence of short gaps rather than one gap the TTL has to
+            # cover whole. A lost lease raises here and stops the poll.
+            self._checkpoint()
             locator = (f"discovery/raw/{source.id}/{attempt_id}"
                        f"/response-{len(captured_locators) + 1:04d}.json")
             self._storage.write_bytes_new(locator, body)
@@ -441,13 +612,14 @@ class DiscoveryRunner:
 
         def degrade(error) -> int:
             spent = spend_requests()
-            with self._fenced() as proxy:
-                SqliteSourceRegistryRepository(proxy).record_poll_outcome(
+            self._fenced_write(
+                lambda proxy: SqliteSourceRegistryRepository(proxy)
+                .record_poll_outcome(
                     source.id, "degraded",
                     next_poll_at=_db_now(self._conn, self._config.poll_interval_days),
                     rot_threshold=self._config.budget.rot_threshold,
                     next_probe_at=_db_now(self._conn,
-                                          self._config.disabled_reprobe_days))
+                                          self._config.disabled_reprobe_days)))
             outcome["poll"] = "degraded"
             outcome["poll_error"] = str(error)
             outcome["requests"] = spent
@@ -463,9 +635,9 @@ class DiscoveryRunner:
             payload = adapter.poll(source.tenant_slug)
         except OversizedFeedError as e:
             spent = spend_requests()
-            with self._fenced() as proxy:
-                SqliteSourceRegistryRepository(proxy).record_poll_outcome(
-                    source.id, "oversized")
+            self._fenced_write(
+                lambda proxy: SqliteSourceRegistryRepository(proxy)
+                .record_poll_outcome(source.id, "oversized"))
             outcome["poll"] = "oversized"
             outcome["requests"] = spent
             if captured_locators:
@@ -518,13 +690,23 @@ class DiscoveryRunner:
         # defer to this explicit BEGIN, the lease fence is re-verified INSIDE
         # the transaction, and it all lands or rolls back whole.
         self._checkpoint()  # the poll may have outlived the lease; re-check
-        with self._fenced() as proxy:
-            counts = self._apply_poll(
+        version_changed_before = len(self._version_changed)
+        notes_before = len(self._notes)
+
+        def apply(proxy):
+            # A retried transaction re-runs this body whole, so the run-state
+            # appends _apply_poll makes are rewound to their pre-attempt point
+            # first: no duplicated note, no duplicated re-gate id.
+            del self._version_changed[version_changed_before:]
+            del self._notes[notes_before:]
+            return self._apply_poll(
                 source, payload, prepared, raw_locator, run,
                 SqliteSnapshotRepository(proxy),
                 SqliteOpportunityRepository(proxy),
                 SqlitePromotionQueueRepository(proxy),
                 SqliteSourceRegistryRepository(proxy))
+
+        counts = self._fenced_write(apply)
         outcome["poll"] = "success"
         outcome.update(counts)
         outcome["requests"] = requests_spent
@@ -624,9 +806,9 @@ class DiscoveryRunner:
         """§5: deterministic gate over the promotion cap, half reserved for
         dependency-epoch re-gates (oldest verdicts first), half for the new
         backlog in priority order, backfilled both ways."""
-        with self._fenced() as proxy:
-            SqlitePromotionQueueRepository(proxy).supersede_stale_epochs(
-                epoch, "dependency epoch advanced")
+        self._fenced_write(
+            lambda proxy: SqlitePromotionQueueRepository(proxy)
+            .supersede_stale_epochs(epoch, "dependency epoch advanced"))
         context = self._gate_context()
         sources = {s.id: s for s in self._registry.list_all()}
 
@@ -657,7 +839,7 @@ class DiscoveryRunner:
             # Backlog promotion, gate verdict, proposed action, and enqueue
             # land as ONE fenced transaction: a crash cannot strand a gated
             # opportunity between verdict and queue row.
-            with self._fenced() as proxy:
+            def gate(proxy, kind=kind, opportunity=opportunity, source=source):
                 opps = SqliteOpportunityRepository(proxy)
                 queue = SqlitePromotionQueueRepository(proxy)
                 if kind == "new":
@@ -673,6 +855,8 @@ class DiscoveryRunner:
                 if version is not None:
                     self._gate_one(opps, queue, opportunity.id, version,
                                    source, context, epoch)
+
+            self._fenced_write(gate)
 
     def _gate_one(self, opps, queue, opportunity_id: str,
                   version: OpportunityVersion, source, context: GateContext,
@@ -716,11 +900,9 @@ class DiscoveryRunner:
         run_seq = run.run_seq
         capability_names = self._eligible_capability_names()
         self._extract(ledger, epoch, run_seq, capability_names)
-        if ledger.exhausted("extraction"):
-            # §4: extraction exhaustion stops the funnel there; judgment never
-            # runs after it (an earlier probe exhaustion is a different budget
-            # and does not reach here).
-            return
+        # No cross-stage stop (§4): judgment is bounded by judged_fit_k and
+        # max_total_model_calls, and by the extracted rows that exist. Rows
+        # extraction could not reach this run simply wait for the next one.
         self._judge(ledger, epoch, run_seq, capability_names)
 
     def _eligible_capability_names(self) -> list[str]:
@@ -772,7 +954,7 @@ class DiscoveryRunner:
             # The proposal write and the extracted transition land as one
             # fenced transaction: a crash cannot persist a result the queue
             # does not know about (which would cost a second charged call).
-            with self._fenced() as proxy:
+            def record_extraction(proxy):
                 SqliteOpportunityRepository(proxy).set_requirement_proposals(
                     claimed.opportunity_id, json.dumps({
                         "version_id": claimed.version_id,
@@ -784,6 +966,8 @@ class DiscoveryRunner:
                     }, ensure_ascii=False))
                 SqlitePromotionQueueRepository(proxy).transition(
                     row_id, "extracted", coverage_bp=coverage)
+
+            self._fenced_write(record_extraction)
 
     def _judge(self, ledger: BudgetLedger, epoch: int, run_seq: int,
                capability_names: list[str]) -> None:
@@ -850,7 +1034,7 @@ class DiscoveryRunner:
             # transaction: no externally visible intermediate, no commit under
             # a re-acquired lease, and a crash cannot strand a result-less
             # pending_judgment row.
-            with self._fenced() as proxy:
+            def record_judgment(proxy):
                 atomic_queue = SqlitePromotionQueueRepository(proxy)
                 if claimed.state == "extracted":
                     atomic_queue.transition(row_id, "pending_judgment")
@@ -867,21 +1051,23 @@ class DiscoveryRunner:
                     }, ensure_ascii=False))
                 atomic_queue.transition(row_id, "judged")
 
+            self._fenced_write(record_judgment)
+
     def _claim_row(self, row_id: str, epoch: int):
         """Exclusive fenced claim (§4): the durable claimed marker lands by
         one conditional update BEFORE any model call, so a second runner's
         claim on the same row fails and never spends a model call; a claim
         left by a no-longer-live fence is recoverable."""
-        with self._fenced() as proxy:
-            return SqlitePromotionQueueRepository(proxy).claim(
-                row_id, epoch, owner_token=self._owner, fence=self._fence)
+        return self._fenced_write(
+            lambda proxy: SqlitePromotionQueueRepository(proxy).claim(
+                row_id, epoch, owner_token=self._owner, fence=self._fence))
 
     def _release_failed(self, row_id: str, reason: str, run_seq: int) -> None:
         """Fenced release: the retry bookkeeping is a persistent transition
         too. reason must already be neutral (never model text)."""
-        with self._fenced() as proxy:
-            SqlitePromotionQueueRepository(proxy).release_failed(
-                row_id, reason, run_seq)
+        self._fenced_write(
+            lambda proxy: SqlitePromotionQueueRepository(proxy).release_failed(
+                row_id, reason, run_seq))
 
     def _posting_payload(self, queue_row) -> tuple[str, dict]:
         """Replay the pinned version's posting from its committed snapshot's
@@ -943,6 +1129,34 @@ def _posting_facts(version: OpportunityVersion) -> PostingFacts:
 
 def _descending_text(text: str) -> tuple:
     return tuple(-byte for byte in text.encode())
+
+
+# Exception types whose message is written by us, the database engine, or the
+# operating system, never by a fetched posting: only these carry their message
+# into the persisted diagnostic (a fetch or adapter error quotes vendor
+# content, so it is recorded by type alone).
+_MESSAGE_SAFE_ERRORS = (sqlite3.Error, OSError, LeaseLostError,
+                        ModelUnavailableError, StorageObjectExistsError,
+                        StageOutputError)
+
+
+def _persisted_failure_message(error: BaseException) -> str:
+    """The message an aborted run persists. Safe by construction rather than
+    by inspection: an exception type that could carry fetched posting text is
+    recorded by type alone, which is still enough to tell a transient
+    infrastructure blip (`database is locked`) from a bug."""
+    if isinstance(error, ModelCallError):
+        return "model call failed operationally"
+    if isinstance(error, _MESSAGE_SAFE_ERRORS):
+        return str(error)[:_FAILURE_MESSAGE_MAX]
+    return ("message withheld: this error type may carry fetched content;"
+            " see the operator log for the traceback")
+
+
+def _failure_summary(error: BaseException) -> str:
+    """Type and safe message, for the run note beside the persisted failure
+    record."""
+    return f"{type(error).__name__}: {_persisted_failure_message(error)}"
 
 
 def _neutral_reason(error) -> str:

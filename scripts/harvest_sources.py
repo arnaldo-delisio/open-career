@@ -18,7 +18,6 @@ Usage:
 import argparse
 import json
 import re
-import sqlite3
 import sys
 import urllib.parse
 import urllib.request
@@ -26,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.instance import db_path  # noqa: E402
 from adapters.storage.sqlite_discovery import SqliteSourceRegistryRepository  # noqa: E402
 from domain.discovery import Source  # noqa: E402
@@ -169,8 +169,7 @@ def main(argv=None) -> None:
     if not path.exists():
         print("instance not initialized (run: open-career init)", file=sys.stderr)
         raise SystemExit(1)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
+    conn = sqlite_connect(path)
     try:
         inserted, skipped = insert_candidates(conn, slugs_by_ats, args.dry_run)
     finally:

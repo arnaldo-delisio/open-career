@@ -146,6 +146,7 @@ open-career discover opportunities [--status open] [--gate pass|fail|none|stale]
 open-career discover show <opportunity-id>
 open-career discover duplicates   # report-only cross-source view, never merged
 open-career discover queue list [--state failed] [--limit N]
+open-career discover runs          # run history: how each run ended, and why it aborted
 open-career discover recover      # clears an expired run lease; a live one is refused
 ```
 

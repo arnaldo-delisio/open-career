@@ -36,6 +36,7 @@ from domain.context import GenerationContext, StrategySnapshot
 from domain.cv_model import Bullet, CvExperienceEntry, CvModel, parse_cv_model
 from domain.edges import CareerEdge
 from domain.entities import CareerFact, Evidence
+from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from domain.gauntlet import SUITE_VERSION, GauntletRunner, GauntletRunResult
 from domain.gauntlet_invariants import FAIL as FAIL_DISPOSITION
@@ -126,7 +127,10 @@ def heartbeat_repo_factory(conn: sqlite3.Connection):
 
     @contextmanager
     def factory():
-        heartbeat_conn = sqlite3.connect(db_file)
+        # Through the shared connection boundary: the heartbeat writes to the
+        # same instance database another session may be writing, so it needs
+        # the same WAL and busy timeout every instance connection gets.
+        heartbeat_conn = sqlite_connect(db_file)
         try:
             yield SqlitePackageRepository(heartbeat_conn)
         finally:

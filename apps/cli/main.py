@@ -16,6 +16,7 @@ from adapters.models.codex_cli import CodexCliAdapter
 from adapters.storage.instance import backups_dir, db_path, instance_dir
 from adapters.storage.local import LocalStorageAdapter
 from adapters.storage.migrations import migrate
+from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.portability import (
     export_archive,
     export_to_file,
@@ -55,9 +56,7 @@ def _connect() -> sqlite3.Connection:
     if not path.exists():
         print("instance not initialized (run: open-career init)", file=sys.stderr)
         raise SystemExit(1)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    return sqlite_connect(path)
 
 
 def cmd_init(_args: argparse.Namespace) -> None:
@@ -253,6 +252,9 @@ def cmd_discover(args: argparse.Namespace) -> None:
         elif args.discover_command == "duplicates":
             _run_cli("discover duplicates", lambda: discover_cli.run_duplicates(
                 conn, print, as_json=args.json))
+        elif args.discover_command == "runs":
+            _run_cli("discover runs", lambda: discover_cli.run_runs_list(
+                conn, print, args.json))
         elif args.discover_command == "recover":
             _run_cli("discover recover",
                      lambda: discover_cli.run_recover(conn, print))
@@ -651,6 +653,10 @@ def main(argv: list[str] | None = None) -> None:
         "run", help="one budgeted discovery run (probe, poll, gate, extract, judge)")
     p_d_run.add_argument("--json", action="store_true")
     p_d_run.set_defaults(func=cmd_discover)
+    p_d_runs = discover_sub.add_parser(
+        "runs", help="recent discovery runs: how each ended, and why it aborted")
+    p_d_runs.add_argument("--json", action="store_true")
+    p_d_runs.set_defaults(func=cmd_discover)
     p_d_sources = discover_sub.add_parser("sources", help="source registry")
     sources_sub = p_d_sources.add_subparsers(dest="sources_command", required=True)
     p_ds_list = sources_sub.add_parser("list", help="list registry sources")

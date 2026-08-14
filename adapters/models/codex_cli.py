@@ -77,6 +77,11 @@ class CodexCliAdapter(ModelAdapter):
         self._allow_uncontained = allow_uncontained
         self._provider_version: str | None = None
 
+    @property
+    def call_timeout_s(self) -> int:
+        """The wall-clock bound one call is held to (see ClaudeCodeAdapter)."""
+        return self._timeout_seconds
+
     def provider_version(self) -> str:
         """`codex --version` verbatim (e.g. 'codex-cli 0.145.0'), cached per
         adapter instance. This is the ONLY identity this backend exposes: the

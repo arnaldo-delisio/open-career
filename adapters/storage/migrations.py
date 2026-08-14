@@ -10,6 +10,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from adapters.storage.sqlite_conn import connect as sqlite_connect
+
 _REPO_ROOT_MIGRATIONS = Path(__file__).resolve().parents[2] / "migrations"
 _PACKAGED_MIGRATIONS = Path(__file__).resolve().parent / "_migrations"
 
@@ -52,9 +54,8 @@ MIGRATIONS_DIR = _resolve_migrations_dir()
 
 
 def _connect(db: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db, isolation_level=None)  # autocommit: the runner issues BEGIN/COMMIT itself
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    # autocommit: the runner issues BEGIN/COMMIT itself
+    return sqlite_connect(db, isolation_level=None)
 
 
 def applied_versions(conn: sqlite3.Connection) -> list[str]:
@@ -89,7 +90,7 @@ def backup(db: Path, backups_dir: Path) -> Path:
     """Back up an existing database using the SQLite backup API."""
     backups_dir.mkdir(parents=True, exist_ok=True)
     dest = backups_dir / f"pre-migrate-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{db.name}"
-    src = sqlite3.connect(db)
+    src = sqlite_connect(db)
     try:
         dst = sqlite3.connect(dest)
         try:
