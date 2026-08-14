@@ -1,0 +1,10 @@
+{
+  "families": [
+    {
+      "name": "Example Family Name",
+      "seniority": "senior",
+      "search_vocabulary": ["example search term", "another search term"],
+      "adjacent_titles": ["Example Adjacent Title"]
+    }
+  ]
+}

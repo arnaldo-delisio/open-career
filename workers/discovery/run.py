@@ -33,11 +33,6 @@ from adapters.storage.sqlite_discovery import (
     SqliteSnapshotRepository,
     SqliteSourceRegistryRepository,
 )
-from adapters.storage.sqlite_entities import (
-    SqliteCapabilityRepository,
-    SqliteRoleFamilyRepository,
-)
-from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_opportunities import (
     SqliteOpportunityRepository,
     SqlitePromotionQueueRepository,
@@ -54,7 +49,6 @@ from domain.discovery import (
     StoredGateVerdict,
     material_fingerprint,
 )
-from domain.edges import is_generation_eligible
 from domain.gate import CompanyMetadata, GateContext, PostingFacts, evaluate_gate
 from domain.ids import new_id
 from domain.ports import ModelUnavailableError, StorageObjectExistsError
@@ -79,6 +73,13 @@ from prompts import load_prompt
 from workers.discovery.probe import probe_source
 
 CONFIG_FILENAME = "discovery.json"
+FAMILIES_FILENAME = "families.json"
+FAMILIES_EXAMPLE_FILENAME = "families.example.json"
+
+# The four keys a families.json entry carries, all required: discovery uses
+# every one of them and a typo'd key must not read as an absent one.
+_FAMILY_KEYS = frozenset({"name", "seniority", "search_vocabulary",
+                          "adjacent_titles"})
 
 # Persisted failure messages are our own exception text, kept bounded so one
 # pathological message cannot bloat the run row.
@@ -142,6 +143,18 @@ class _FencedTransaction:
 
 
 @dataclass(frozen=True)
+class TargetFamily:
+    """One operator-authored target role family (OC-42). Only what discovery
+    uses: the CV behind a family and the rationale for it live in the
+    candidate's own materials, never in this config."""
+
+    name: str
+    seniority: str
+    search_vocabulary: tuple[str, ...]
+    adjacent_titles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DiscoveryConfig:
     """Locked before the run; the budget and these scheduler numbers are all
     recorded on the run row (§4)."""
@@ -153,8 +166,8 @@ class DiscoveryConfig:
     probe_backoff_base_days: int = 1
     probe_backoff_cap_days: int = 30
     disabled_reprobe_days: int = 30
-    # The evidence-coverage match threshold (§5), in basis points of a
-    # capability's content tokens. Calibrated, not guessed
+    # The coverage match threshold (§5), in basis points of a target-family
+    # vocabulary term's content tokens. Calibrated, not guessed
     # (scripts/calibrate_evidence_matcher.py); config because the threshold
     # trades precision against recall and that is a judgment call.
     coverage_match_fraction_bp: int = CONTENT_FRACTION_BP
@@ -275,7 +288,7 @@ def load_config(storage) -> DiscoveryConfig:
             raise ValueError(
                 f"{CONFIG_FILENAME} key '{key}' must be at least 1, got {value}")
         if key == "coverage_match_fraction_bp" and not 1 <= value <= 10000:
-            # 0 would match every capability against every phrase (coverage
+            # 0 would match every vocabulary term against every phrase (coverage
             # saturated at 100%, the signal destroyed in the other direction).
             raise ValueError(
                 f"{CONFIG_FILENAME} key '{key}' must be between 1 and 10000"
@@ -304,6 +317,94 @@ def load_config(storage) -> DiscoveryConfig:
             f" bounded attempts, {FETCH_ATTEMPT_WORST_S}s)),"
             f" got {config.lease_ttl_s}")
     return config
+
+
+def load_families(storage) -> list[TargetFamily]:
+    """The target role families from the instance's families.json (OC-42: the
+    families are operator-authored config, no longer walked out of the career
+    graph). Required, never defaulted: an empty family set would compute an
+    empty coverage vocabulary and skip the gate's seniority dimension while the
+    run still reported success, which is silent degradation, not a default."""
+    # Same read discipline as load_config: only a definite missing file is
+    # special-cased, every other read failure is an error rather than a
+    # fallback that quietly changes what the run does.
+    try:
+        text = storage.read_text(FAMILIES_FILENAME)
+    except FileNotFoundError as e:
+        raise ValueError(
+            f"{FAMILIES_FILENAME} (in the instance directory) is required:"
+            " discovery matches postings against your target role families."
+            f" Copy {FAMILIES_EXAMPLE_FILENAME} from the repo root and fill"
+            " it in") from e
+    except (UnicodeDecodeError, OSError) as e:
+        raise ValueError(
+            f"{FAMILIES_FILENAME} (in the instance directory) could not be"
+            f" read: {e}") from e
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"{FAMILIES_FILENAME} (in the instance directory) is not valid"
+            f" JSON: {e}") from e
+    if not isinstance(document, dict):
+        raise ValueError(f"{FAMILIES_FILENAME} must be a JSON object")
+    unknown = set(document) - {"families"}
+    if unknown:
+        raise ValueError(
+            f"unknown {FAMILIES_FILENAME} keys: {sorted(unknown)};"
+            " allowed keys: ['families']")
+    entries = document.get("families")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError(
+            f"{FAMILIES_FILENAME} key 'families' must be a non-empty list")
+    families = []
+    for index, entry in enumerate(entries):
+        where = f"{FAMILIES_FILENAME} families[{index}]"
+        if not isinstance(entry, dict):
+            raise ValueError(f"{where} must be a JSON object")
+        unknown = set(entry) - _FAMILY_KEYS
+        if unknown:
+            raise ValueError(
+                f"unknown {where} keys: {sorted(unknown)};"
+                f" allowed keys: {sorted(_FAMILY_KEYS)}")
+        missing = _FAMILY_KEYS - set(entry)
+        if missing:
+            raise ValueError(f"{where} is missing keys: {sorted(missing)}")
+        families.append(TargetFamily(
+            name=_nonempty_string(entry["name"], f"{where} 'name'"),
+            seniority=_nonempty_string(entry["seniority"],
+                                       f"{where} 'seniority'"),
+            search_vocabulary=_string_tuple(entry["search_vocabulary"],
+                                            f"{where} 'search_vocabulary'"),
+            adjacent_titles=_string_tuple(entry["adjacent_titles"],
+                                          f"{where} 'adjacent_titles'")))
+    return families
+
+
+def _nonempty_string(value, where: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{where} must be a non-empty string")
+    return value
+
+
+def _string_tuple(value, where: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"{where} must be a list of non-empty strings")
+    return tuple(_nonempty_string(item, f"{where} entry")
+                 for item in value)
+
+
+def vocabulary_terms(families: list[TargetFamily]) -> list[str]:
+    """The deterministic coverage vocabulary: every family's search terms,
+    adjacent titles and its own name, deduplicated in first-seen order. These
+    are multi-token phrases, which is exactly what the content-fraction
+    matcher scores (domain/requirements.py)."""
+    terms: dict[str, None] = {}
+    for family in families:
+        for term in (*family.search_vocabulary, *family.adjacent_titles,
+                     family.name):
+            terms.setdefault(term, None)
+    return list(terms)
 
 
 def _db_now(conn, days_ahead: int = 0) -> str:
@@ -338,6 +439,8 @@ class DiscoveryRunner:
         # Opportunities whose material version changed this run: their gate
         # verdict re-evaluates like an epoch bump does (§3/§5).
         self._version_changed: list[str] = []
+        # The target families, read from the instance config at run start.
+        self._families: list[TargetFamily] = []
 
     # ------------------------------------------------------------------ run
 
@@ -347,6 +450,11 @@ class DiscoveryRunner:
         # Checked before anything is claimed: a refused configuration must not
         # leave a lease held behind it.
         self._check_model_timeout_fits_the_lease()
+        # Same posture as the config checks: a missing or malformed
+        # families.json refuses the run here, before a lease is held and
+        # before a single fetch, rather than degrading into a run with no
+        # coverage vocabulary and no seniority gate.
+        self._families = load_families(self._storage)
         self._lease = SqliteDiscoveryLease(self._conn)
         self._owner = new_id("dlease")
         self._fence = retry_on_locked(
@@ -928,39 +1036,27 @@ class DiscoveryRunner:
     def _gate_context(self) -> GateContext:
         policies = SqliteUserPolicyRepository(self._conn).get_policies()
         fields = SqliteUserProfileRepository(self._conn).get_fields()
-        families = SqliteRoleFamilyRepository(self._conn).list_all()
         return GateContext(
             policies=policies,
             residence_country=fields.get("country") or fields.get("location"),
+            # Every configured family is a target: families.json has no status
+            # concept, so a family you no longer want is one you remove.
             active_family_target_seniorities=tuple(
-                f.target_seniority for f in families if f.status == "active"))
+                f.seniority for f in self._families))
 
     # ------------------------------------------------- extraction + judgment
 
     def _promote(self, ledger: BudgetLedger, epoch: int, run) -> None:
         run_seq = run.run_seq
-        capability_names = self._eligible_capability_names()
-        self._extract(ledger, epoch, run_seq, capability_names)
+        terms = vocabulary_terms(self._families)
+        self._extract(ledger, epoch, run_seq, terms)
         # No cross-stage stop (§4): judgment is bounded by judged_fit_k and
         # max_total_model_calls, and by the extracted rows that exist. Rows
         # extraction could not reach this run simply wait for the next one.
-        self._judge(ledger, epoch, run_seq, capability_names)
-
-    def _eligible_capability_names(self) -> list[str]:
-        """Capability names with at least one generation-eligible SUPPORTS
-        edge (OC-31 discipline): the deterministic coverage vocabulary."""
-        edges = SqliteCareerEdgeRepository(self._conn)
-        names = []
-        for capability in SqliteCapabilityRepository(self._conn).list_all():
-            eligible = [e for e in edges.active_edges_to(
-                "capability", capability.id, "SUPPORTS")
-                if is_generation_eligible(e)]
-            if eligible:
-                names.append(capability.name)
-        return names
+        self._judge(ledger, epoch, run_seq)
 
     def _extract(self, ledger: BudgetLedger, epoch: int, run_seq: int,
-                 capability_names: list[str]) -> None:
+                 vocabulary: list[str]) -> None:
         if not self._model_available:
             return
         # No capacity means no claim: claiming a row re-checks its epoch and
@@ -992,9 +1088,9 @@ class DiscoveryRunner:
                 # posting, nothing from the user's state), so a result pinned
                 # to this same version stays valid when the dependency epoch
                 # advances: it is reused and re-stamped, and only coverage,
-                # which does depend on the graph, is recomputed. Without this
-                # every career-graph write would buy the whole extracted
-                # backlog a second time.
+                # which does depend on the candidate side, is recomputed.
+                # Without this every dependency bump would buy the whole
+                # extracted backlog a second time.
                 stored_phrases = stored.get("requirements")
                 if stored_phrases is not None and not stored.get("stale"):
                     requirements = tuple(r["phrase"] for r in stored_phrases)
@@ -1019,7 +1115,7 @@ class DiscoveryRunner:
                 continue
             self._checkpoint()  # the model call may have outlived the lease
             coverage = coverage_bp(
-                requirements, capability_names,
+                requirements, vocabulary,
                 self._config.coverage_match_fraction_bp)
             # The proposal write and the extracted transition land as one
             # fenced transaction: a crash cannot persist a result the queue
@@ -1044,8 +1140,7 @@ class DiscoveryRunner:
                 " opportunity version was unchanged; no extraction call made"
                 " for them")
 
-    def _judge(self, ledger: BudgetLedger, epoch: int, run_seq: int,
-               capability_names: list[str]) -> None:
+    def _judge(self, ledger: BudgetLedger, epoch: int, run_seq: int) -> None:
         if not self._model_available:
             return
         if not ledger.admits("judgment"):
@@ -1072,12 +1167,11 @@ class DiscoveryRunner:
         else:
             rows = [PendingRow(r.id, r.enqueue_seq, coverage_priority_key(
                 r.coverage_bp or 0, r.enqueue_seq)) for r in extracted]
-        families = [f for f in SqliteRoleFamilyRepository(self._conn).list_all()
-                    if f.status == "active"]
         candidate = {
-            "capabilities": capability_names,
-            "role_families": [{"name": f.name, "target_seniority": f.target_seniority}
-                              for f in families],
+            "target_families": [
+                {"name": f.name, "seniority": f.seniority,
+                 "vocabulary": list(f.search_vocabulary) + list(f.adjacent_titles)}
+                for f in self._families],
         }
         for row_id in _staged_order(self._config.budget.judged_fit_k, rows):
             self._checkpoint()  # lease re-checked before each claim/transition

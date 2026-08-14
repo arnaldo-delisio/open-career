@@ -194,6 +194,13 @@ calls and 10 judged fits (40 total model calls) per run. Cap them (or anything e
 | `poll_interval_days` | 1 | `probe_backoff_base_days` | 1 |
 | `probe_backoff_cap_days` | 30 | `disabled_reprobe_days` | 30 |
 
+**`discover run` also requires `instance/families.json`**: your target role families, which
+are the candidate side of the run (the coverage vocabulary and the gate's seniority
+targets). It is required rather than defaulted, because a run with no families would score
+every posting at zero coverage and skip the seniority check while still reporting success.
+Copy `families.example.json` and fill it in; each family carries `name`, `seniority`,
+`search_vocabulary` and `adjacent_titles`, and nothing else.
+
 Set the model stages to zero (`{"max_extraction_calls": 0, "judged_fit_k": 0,
 "max_total_model_calls": 0}`) for a fetch-and-gate-only run that costs no model calls.
 Reviewed company metadata (`discover sources set-meta <id> industry <value>`) feeds the

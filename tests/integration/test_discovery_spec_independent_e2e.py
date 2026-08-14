@@ -77,6 +77,11 @@ def env(tmp_path):
     conn = sqlite3.connect(tmp_path / "open-career.sqlite3")
     conn.execute("PRAGMA foreign_keys = ON")
     storage = LocalStorageAdapter(tmp_path)
+    # Placeholder target families: families.json is required for every run
+    # (OC-42) and is the run's coverage vocabulary.
+    storage.write_text("families.json", json.dumps({"families": [{
+        "name": "Example Platform Family", "seniority": "senior",
+        "search_vocabulary": ["Python"], "adjacent_titles": []}]}))
     source = Source(id=new_id("src"), ats_type="greenhouse",
                     tenant_slug="acme", origin="curated")
     registry = SqliteSourceRegistryRepository(conn)

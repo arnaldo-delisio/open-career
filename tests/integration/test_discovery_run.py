@@ -21,8 +21,6 @@ from adapters.storage.sqlite_discovery import (
     SqliteSnapshotRepository,
     SqliteSourceRegistryRepository,
 )
-from adapters.storage.sqlite_entities import SqliteCapabilityRepository, SqliteEvidenceRepository
-from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
 from adapters.storage.sqlite_opportunities import (
     SqliteOpportunityRepository,
     SqlitePromotionQueueRepository,
@@ -30,8 +28,6 @@ from adapters.storage.sqlite_opportunities import (
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from domain.budget import Budget
 from domain.discovery import Source
-from domain.edges import CareerEdge
-from domain.entities import Capability, Evidence
 from domain.ids import new_id
 from domain.ports import ModelAdapter
 from adapters.sources.http import FetchError
@@ -83,12 +79,22 @@ class FakeModel(ModelAdapter):
                            "gap_requirement_ids": ["r2"]})
 
 
+# Placeholder target families: families.json is required for every run, so the
+# fixture writes one. "Python" is the vocabulary term the coverage scenario
+# leans on; the seniority is stated but the canned postings carry no band, so
+# the seniority dimension skips exactly as it did before.
+FIXTURE_FAMILIES = {"families": [{
+    "name": "Example Platform Family", "seniority": "senior",
+    "search_vocabulary": ["Python"], "adjacent_titles": []}]}
+
+
 @pytest.fixture
 def instance(tmp_path):
     migrate(tmp_path / "open-career.sqlite3")
     conn = sqlite3.connect(tmp_path / "open-career.sqlite3")
     conn.execute("PRAGMA foreign_keys = ON")
     storage = LocalStorageAdapter(tmp_path)
+    (tmp_path / "families.json").write_text(json.dumps(FIXTURE_FAMILIES))
     yield conn, storage
     conn.close()
 
@@ -477,18 +483,11 @@ def test_hostile_posting_text_stays_data_in_both_model_stages(instance):
 
 # -------------------------------------------------------------- cheap rank
 
-def test_coverage_uses_eligible_capabilities_and_orders_judgment(instance):
+def test_coverage_uses_family_vocabulary_and_orders_judgment(instance):
     conn, storage = instance
     seed_source(conn)
-    # A capability with an eligible SUPPORTS edge: evidence -> capability.
-    SqliteCapabilityRepository(conn).add(Capability(id="cap_1", name="python",
-                                                    strength="strong"))
-    SqliteEvidenceRepository(conn).add(Evidence(id="ev_1", evidence_type="cv",
-                                                title="cv"))
-    SqliteCareerEdgeRepository(conn).add(CareerEdge(
-        id="edge_1", source_type="evidence", source_id="ev_1",
-        edge_type="SUPPORTS", target_type="capability", target_id="cap_1",
-        claim_kind="fact", provenance="test", created_by="user", user_verified=1))
+    # The coverage vocabulary is the configured families' terms (the fixture's
+    # "Python"), no career-graph read anywhere in the run.
     _, adapters, config, model = make_env(
         conn, storage, gh_board(gh_job(1, "Engineer")))
     run = run_once(conn, storage, adapters, config, model)
@@ -1612,7 +1611,7 @@ def test_probe_bodies_are_captured_durably_for_every_outcome(
 def test_the_coverage_match_threshold_is_config_and_bounded(instance):
     """The calibrated match threshold (§5 amendment) is configurable because
     it trades precision against recall, and bounded because 0 would match
-    every capability against every phrase, saturating coverage at 100%."""
+    every vocabulary term against every phrase, saturating coverage at 100%."""
     conn, storage = instance
     from workers.discovery.run import load_config
 
@@ -1727,7 +1726,12 @@ def test_discovery_indexes_exist(instance):
 
 def test_cold_start_fallback_is_recorded_on_the_run(instance):
     conn, storage = instance
-    seed_source(conn)  # empty graph: coverage uniformly zero
+    seed_source(conn)
+    # Vocabulary that matches nothing in the canned posting: coverage is
+    # uniformly zero, which is the cold start the fallback order exists for.
+    storage.write_text("families.json", json.dumps({"families": [{
+        "name": "Example Unrelated Family", "seniority": "senior",
+        "search_vocabulary": ["deep sea welding"], "adjacent_titles": []}]}))
     _, adapters, config, model = make_env(
         conn, storage, gh_board(gh_job(1, "Engineer")))
     run = run_once(conn, storage, adapters, config, model)

@@ -18,10 +18,18 @@ from apps.cli.main import main
 from domain.ports import ModelAdapter
 
 
+# families.json is required for every run (OC-42), so the instance carries a
+# placeholder one; the real target families live in the operator's instance.
+FIXTURE_FAMILIES = {"families": [{
+    "name": "Example Platform Family", "seniority": "senior",
+    "search_vocabulary": ["Python"], "adjacent_titles": []}]}
+
+
 @pytest.fixture
 def instance(tmp_path, monkeypatch):
     monkeypatch.setenv("OPEN_CAREER_INSTANCE", str(tmp_path))
     migrate(tmp_path / "open-career.sqlite3")
+    (tmp_path / "families.json").write_text(json.dumps(FIXTURE_FAMILIES))
     return tmp_path
 
 

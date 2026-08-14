@@ -5,8 +5,8 @@ the run budget, both inside the untrusted-content isolation boundary.
 The posting is data, never instructions: it travels JSON-encoded inside a
 fenced block beneath a stated boundary (the pattern cv_generation.md set), and
 output is validated against a closed schema in code with one retry (OC-5: the
-model proposes structure, code decides). Coverage against the graph's
-capability names is computed here deterministically, zero model involvement.
+model proposes structure, code decides). Coverage against the target-family
+vocabulary is computed here deterministically, zero model involvement.
 """
 
 import json
@@ -280,8 +280,8 @@ class JudgedFitService:
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 
-# Connectives and structural words carry no capability signal: a capability
-# name like "Governance and human-in-the-loop controls" is about governance,
+# Connectives and structural words carry no matching signal: a vocabulary term
+# like "Governance and human-in-the-loop controls" is about governance,
 # human, loop and controls, and requiring "and", "in" and "the" to appear
 # verbatim in one excerpt is what made the shipped all-tokens rule match
 # nothing at all. A closed, tested constant, never a model.
@@ -291,7 +291,7 @@ CAPABILITY_STOPWORDS: frozenset[str] = frozenset({
     "end", "e2e", "using", "based",
 })
 
-# The fraction of a capability's content tokens a phrase must carry, in basis
+# The fraction of a vocabulary term's content tokens a phrase must carry, in basis
 # points, calibrated in scripts/calibrate_evidence_matcher.py against real
 # postings and a hand-labelled sample. Configurable because the threshold is a
 # judgment call; the calibration numbers are recorded in the design doc §5.
@@ -305,21 +305,21 @@ def normalized_tokens(text: str) -> frozenset[str]:
 
 
 def stopword_free_tokens(text: str) -> frozenset[str]:
-    """A capability name's content tokens: normalized, connectives dropped.
-    A name made only of connectives ("end-to-end") has no content and matches
-    nothing: keeping its tokens would turn the emptiest possible name into
+    """A vocabulary term's content tokens: normalized, connectives dropped.
+    A term made only of connectives ("end-to-end") has no content and matches
+    nothing: keeping its tokens would turn the emptiest possible term into
     the broadest match key, inflating coverage on ordinary words (Codex r3)."""
     return normalized_tokens(text) - CAPABILITY_STOPWORDS
 
 
-def capability_matches(requirement: str, capability_names: list,
+def capability_matches(requirement: str, vocabulary: list,
                        threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
-    """The capability names matching one requirement phrase: at least
-    `threshold_bp` of the capability's content tokens present in the phrase's
+    """The target-family vocabulary terms matching one requirement phrase: at
+    least `threshold_bp` of the term's content tokens present in the phrase's
     normalized tokens. Deterministic, zero model involvement (OC-37 §5)."""
     phrase_tokens = normalized_tokens(requirement)
     matched = []
-    for name in capability_names:
+    for name in vocabulary:
         content = stopword_free_tokens(name)
         if not content:
             continue
@@ -329,19 +329,20 @@ def capability_matches(requirement: str, capability_names: list,
     return matched
 
 
-def matched_requirements(requirements: tuple, capability_names: list,
+def matched_requirements(requirements: tuple, vocabulary: list,
                          threshold_bp: int = CONTENT_FRACTION_BP) -> list[str]:
-    """Requirements matched by at least one capability (normalized token
+    """Requirements matched by at least one vocabulary term (normalized token
     match on content tokens, at the calibrated fraction threshold)."""
     return [requirement for requirement in requirements
-            if capability_matches(requirement, capability_names, threshold_bp)]
+            if capability_matches(requirement, vocabulary, threshold_bp)]
 
 
-def coverage_bp(requirements: tuple, capability_names: list,
+def coverage_bp(requirements: tuple, vocabulary: list,
                 threshold_bp: int = CONTENT_FRACTION_BP) -> int:
     """Coverage as integer basis points: the fraction of extracted
-    requirements with an eligible-capability match. No requirements = 0."""
+    requirements matched by a target-family vocabulary term. No
+    requirements = 0."""
     if not requirements:
         return 0
-    matched = matched_requirements(requirements, capability_names, threshold_bp)
+    matched = matched_requirements(requirements, vocabulary, threshold_bp)
     return (10000 * len(matched)) // len(requirements)
