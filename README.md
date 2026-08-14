@@ -85,6 +85,20 @@ policy seam: `open-career policy set <key> <json-or-scalar>` and `open-career po
 show` (closed key set: EEO stance, compensation floor/target with scalar preference,
 preference and logistics policies; deterministic comparison rules in code, OC-22).
 
+Career state keeps changing after onboarding, so it is editable outside the sittings:
+`open-career experience add` states a new role, project, venture, education or other entry
+plus its facts (blank end date means ongoing and renders "Present"), `open-career
+experience list` shows ids, dates and fact counts, and `open-career experience edit <id>`
+corrects title, org and dates and adds or retracts facts (on that surface a blank answer
+keeps the current value and `-` clears a nullable one, which for an end date means
+ongoing) (a retraction sets status, it
+never deletes, OC-31; the extractor's unconfirmed summary prose is not editable here,
+OC-41). `open-career capability add` names a capability and mints its evidence chain with
+it, so it is packageable immediately, born unrated because strength is never asked and
+evidence depth is computed instead (OC-40); `open-career capability list` prints that
+depth beside the stored strength. Everything these write is the same shape the interview
+writes: approved user-stated facts with an interview evidence row and a PROVES edge.
+
 Each sitting can also be driven through one-shot commands (OC-36), so an agent limited to
 short-lived commands can conduct it: `open-career session start <onboard|deepen|stories>
 [cv]` detaches a serve process holding the sitting open, `session show` prints the
@@ -106,7 +120,12 @@ new version), then `open-career package generate <family>` walks the evidence gr
 typed CV content model, verifies it with the deterministic grounding verifier (every
 number, date, entity, and content word must trace to approved state), renders a
 single-column ATS-safe PDF via headless Chromium, and runs the mandatory `pdftotext`
-section-equivalence check. `package review <version>` accepts (approves) or edits with the
+section-equivalence check. The rendered document carries a target-role headline typed
+in code from the role family (never model-authored), the profile links, and open-ended
+roles as "2026 - Present" (a null end date means ongoing); every visual string it shows,
+the footer included, is part of the typed projection the `pdftotext` check compares
+against, so nothing reaches the page unmodelled (spec: the scope's
+`decisions/cv-positioning-layer.md`, OC-41 slice one). `package review <version>` accepts (approves) or edits with the
 write-back loop: an ungrounded edit either mints the underlying fact and regenerates, or
 is dropped. `package show <id>`, `package export <id> --out cv.pdf` (defaults to the
 approved version, hash-validated), `package recover` (claims expired generation leases).

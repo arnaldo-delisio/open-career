@@ -11,7 +11,6 @@ model; the user speaks, the system records.
 """
 
 import sqlite3
-import time
 from typing import Callable
 
 from adapters.storage.sqlite_edges import SqliteCareerEdgeRepository
@@ -29,14 +28,16 @@ from apps.cli.interview import (
     ask_yes_no,
     offer_quantifier,
     run_evidence_intake,
+    write_stated_fact,
     store_statement_file,
 )
 from domain.edges import CareerEdge
-from domain.entities import CareerFact, Evidence
+from domain.entities import Evidence
 from domain.ids import new_id
 from domain.policies import WORK_TRACKS
 from domain.ports import StorageAdapter
 from domain.questions import TIER1, Question
+from domain.traversal import STORY_NOTE_PREFIX
 
 Ask = Callable[[str], str]
 Say = Callable[[str], None]
@@ -52,8 +53,6 @@ PREFERENCE_POLICY_KEYS = ("company_stage_pref", "company_size_pref",
 LOGISTICS_POLICY_KEYS = ("relocation_whitelist", "timezone_bounds",
                          "visa_details", "earliest_start")
 
-_STORY_NOTE_PREFIX = "story-for-experience:"
-
 # Behavioral stories come from work, not coursework: education rows are out of
 # the story bank and its completeness denominator (drive finding).
 STORY_EXPERIENCE_KINDS = ("role", "project", "venture", "other")
@@ -62,10 +61,6 @@ STORY_EXPERIENCE_KINDS = ("role", "project", "venture", "other")
 def _story_experiences(conn) -> list:
     return [e for e in SqliteExperienceRepository(conn).list_all()
             if e.kind in STORY_EXPERIENCE_KINDS]
-
-
-def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 class Pacer:
@@ -90,9 +85,9 @@ class Pacer:
 # --- resume state, computed from the data ------------------------------------
 
 def _experiences_with_stories(conn) -> set[str]:
-    return {e.notes.removeprefix(_STORY_NOTE_PREFIX)
+    return {e.notes.removeprefix(STORY_NOTE_PREFIX)
             for e in SqliteEvidenceRepository(conn).list_all()
-            if e.notes and e.notes.startswith(_STORY_NOTE_PREFIX)}
+            if e.notes and e.notes.startswith(STORY_NOTE_PREFIX)}
 
 
 def _capabilities_with_eligible_chain(conn) -> set[str]:
@@ -152,7 +147,7 @@ def _run_story_bank(conn, storage: StorageAdapter, ask: Ask, say: Say) -> None:
         evidence_repo.add(Evidence(
             id=evidence_id, evidence_type="user_statement",
             title=f"story: {experience.title}", locator=locator, content_hash=digest,
-            notes=f"{_STORY_NOTE_PREFIX}{experience.id}"))
+            notes=f"{STORY_NOTE_PREFIX}{experience.id}"))
         # PROVES: which of this experience's approved facts does it substantiate?
         for fact in facts_repo.list_all():
             if fact.experience_id != experience.id or not fact.user_approved \
@@ -172,7 +167,8 @@ def _run_story_bank(conn, storage: StorageAdapter, ask: Ask, say: Say) -> None:
                 break
             capability = capabilities_repo.get_by_name(name)
             if capability is None:
-                say(f"  (unknown capability '{name}'; add it via onboarding first)")
+                say(f"  (unknown capability '{name}'; add it with"
+                    " `open-career capability add`, then re-run this cluster)")
                 continue
             edges_repo.add(CareerEdge(
                 id=new_id("edge"), source_type="evidence", source_id=evidence_id,
@@ -215,18 +211,11 @@ def _run_capability_deepening(conn, ask: Ask, say: Say) -> None:
         # The full eligible chain, exactly the shape the traversal consumes:
         # approved fact on the experience, user_statement evidence, PROVES +
         # SUPPORTS edges, DEMONSTRATES as the summary edge.
-        fact = CareerFact(id=new_id("fact"), fact_type="achievement",
-                          statement=statement, source="interview", user_approved=1,
-                          experience_id=experience.id, verified_at=_now())
-        facts_repo.add(fact)
         evidence = Evidence(id=new_id("ev"), evidence_type="user_statement",
                             title=f"capability evidence: {capability.name}")
         evidence_repo.add(evidence)
-        edges_repo.add(CareerEdge(
-            id=new_id("edge"), source_type="evidence", source_id=evidence.id,
-            edge_type="PROVES", target_type="career_fact", target_id=fact.id,
-            claim_kind="fact", provenance="stories:capability-deepening",
-            created_by="user", user_verified=1))
+        fact = write_stated_fact(conn, lambda: evidence, statement, "achievement",
+                                 "stories:capability-deepening", experience.id)
         edges_repo.add(CareerEdge(
             id=new_id("edge"), source_type="evidence", source_id=evidence.id,
             edge_type="SUPPORTS", target_type="capability", target_id=capability.id,

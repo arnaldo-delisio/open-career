@@ -4,6 +4,7 @@ Plain row mapping; no business logic in SQL."""
 import json
 import sqlite3
 
+from adapters.storage.tx import transaction
 from domain.entities import (
     Capability,
     CareerFact,
@@ -33,7 +34,7 @@ class SqliteExperienceRepository(ExperienceRepository):
         self._conn = conn
 
     def add(self, experience: Experience) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO experiences (id, kind, title, org, start_date, end_date,"
                 " summary, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -50,6 +51,17 @@ class SqliteExperienceRepository(ExperienceRepository):
         rows = self._conn.execute(f"{self._SELECT} ORDER BY display_order, id").fetchall()
         return [Experience(*r) for r in rows]
 
+    def update_fields(self, experience_id: str, title: str, org: str | None,
+                      start_date: str | None, end_date: str | None) -> None:
+        # Only the user-stated container fields; `summary` is unconfirmed
+        # extractor prose (OC-41) and is never edited through this seam.
+        with transaction(self._conn):
+            self._conn.execute(
+                "UPDATE experiences SET title = ?, org = ?, start_date = ?, end_date = ?,"
+                " updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?",
+                (title, org, start_date, end_date, experience_id),
+            )
+
 
 class SqliteCareerFactRepository(CareerFactRepository):
     _SELECT = ("SELECT id, fact_type, statement, source, user_approved, experience_id,"
@@ -60,7 +72,7 @@ class SqliteCareerFactRepository(CareerFactRepository):
         self._conn = conn
 
     def add(self, fact: CareerFact) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO career_facts (id, experience_id, fact_type, statement, status,"
                 " confidence, source, source_location, user_approved, verified_at,"
@@ -79,7 +91,7 @@ class SqliteCareerFactRepository(CareerFactRepository):
         return [CareerFact(*r) for r in self._conn.execute(f"{self._SELECT} ORDER BY id")]
 
     def set_approval(self, fact_id: str, statement: str, verified_at: str) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "UPDATE career_facts SET statement = ?, user_approved = 1, verified_at = ?"
                 " WHERE id = ?",
@@ -87,7 +99,7 @@ class SqliteCareerFactRepository(CareerFactRepository):
             )
 
     def set_status(self, fact_id: str, status: str) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute("UPDATE career_facts SET status = ? WHERE id = ?", (status, fact_id))
 
 
@@ -99,7 +111,7 @@ class SqliteEvidenceRepository(EvidenceRepository):
         self._conn = conn
 
     def add(self, evidence: Evidence) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO evidence (id, evidence_type, title, locator, content_hash, notes)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
@@ -115,7 +127,7 @@ class SqliteEvidenceRepository(EvidenceRepository):
         return [Evidence(*r) for r in self._conn.execute(f"{self._SELECT} ORDER BY id")]
 
     def mark_review_completed(self, evidence_id: str, completed_at: str) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "UPDATE evidence SET review_completed_at = ? WHERE id = ?",
                 (completed_at, evidence_id))
@@ -129,7 +141,7 @@ class SqliteCapabilityRepository(CapabilityRepository):
         self._conn = conn
 
     def add(self, capability: Capability) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO capabilities (id, name, strength, description, last_assessed_at)"
                 " VALUES (?, ?, ?, ?, ?)",
@@ -158,7 +170,7 @@ class SqliteRoleFamilyRepository(RoleFamilyRepository):
         self._conn = conn
 
     def add(self, role_family: RoleFamily) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO role_families (id, name, rationale, display_order,"
                 " target_seniority, geography, search_vocabulary, adjacent_titles, status)"
@@ -195,7 +207,7 @@ class SqliteCareerGoalRepository(CareerGoalRepository):
         self._conn = conn
 
     def add(self, goal: CareerGoal) -> None:
-        with self._conn:
+        with transaction(self._conn):
             self._conn.execute(
                 "INSERT INTO career_goals (id, statement, horizon, status) VALUES (?, ?, ?, ?)",
                 (goal.id, goal.statement, goal.horizon, goal.status),
@@ -218,7 +230,7 @@ class SqliteStrategyRepository(StrategyRepository):
         self._conn = conn
 
     def add_version(self, version: StrategyVersion) -> None:
-        with self._conn:  # version row and allocations land together
+        with transaction(self._conn):  # version row and allocations land together
             self._conn.execute(
                 "INSERT INTO strategy_versions (id, version, objective, time_horizon,"
                 " constraints_json, hypotheses_json, bottlenecks, focus, created_by,"

@@ -5,6 +5,7 @@ constraints and the partial unique index backstop."""
 import sqlite3
 
 from adapters.storage.epoch import bump_dependency_epoch
+from adapters.storage.tx import transaction
 from domain.edges import (
     EDGE_VOCABULARY,
     UNKNOWN_TYPE,
@@ -39,7 +40,7 @@ class SqliteCareerEdgeRepository(CareerEdgeRepository):
         self._conn = conn
 
     def add(self, edge: CareerEdge) -> CareerEdge:
-        with self._conn:  # one transaction: validation and insert together
+        with transaction(self._conn):  # one transaction: validation and insert together
             expected = EDGE_VOCABULARY.get(edge.edge_type)
             if expected is None:
                 raise EdgeValidationError(

@@ -32,10 +32,11 @@ from adapters.storage.sqlite_entities import (
 from adapters.storage.sqlite_packages import SqlitePackageRepository
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
 from apps.cli.families import resolve_family
+from apps.cli.interview import write_stated_fact
 from domain.context import GenerationContext, StrategySnapshot
 from domain.cv_model import Bullet, CvExperienceEntry, CvModel, parse_cv_model
 from domain.edges import CareerEdge
-from domain.entities import CareerFact, Evidence
+from domain.entities import Evidence
 from adapters.storage.sqlite_conn import connect as sqlite_connect
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
 from domain.gauntlet import SUITE_VERSION, GauntletRunner, GauntletRunResult
@@ -488,15 +489,9 @@ def _mint_fact_for_edit(conn: sqlite3.Connection, context: GenerationContext,
     evidence = Evidence(id=new_id("ev"), evidence_type="user_statement",
                         title=f"Package review write-back {now[:10]}")
     SqliteEvidenceRepository(conn).add(evidence)
-    fact = CareerFact(id=new_id("fact"), fact_type="achievement", statement=statement,
-                      source="interview", user_approved=1, verified_at=now,
-                      experience_id=entry.experience_id)
-    SqliteCareerFactRepository(conn).add(fact)
+    fact = write_stated_fact(conn, lambda: evidence, statement, "achievement",
+                             "package-review:write-back", entry.experience_id)
     edges = SqliteCareerEdgeRepository(conn)
-    edges.add(CareerEdge(id=new_id("edge"), source_type="evidence", source_id=evidence.id,
-                         edge_type="PROVES", target_type="career_fact", target_id=fact.id,
-                         claim_kind="fact", provenance="package-review:write-back",
-                         created_by="user", user_verified=1))
     edges.add(CareerEdge(id=new_id("edge"), source_type="evidence", source_id=evidence.id,
                          edge_type="SUPPORTS", target_type="capability",
                          target_id=capability.id, claim_kind="fact",

@@ -21,7 +21,9 @@ from adapters.storage.sqlite_entities import (
     SqliteEvidenceRepository,
 )
 from adapters.storage.sqlite_policies import SqliteUserPolicyRepository
+from adapters.storage.tx import transaction
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
+from domain import dates
 from domain.edges import CareerEdge
 from domain.entities import CareerFact, Evidence
 from domain.ids import new_id
@@ -66,6 +68,76 @@ def ask_yes_no(ask: Ask, say: Say, prompt: str, default: bool) -> bool:
         if raw in ("n", "no"):
             return False
         say("invalid choice, expected y/n")
+
+
+def ask_choice(ask: Ask, say: Say, prompt: str, choices: tuple[str, ...],
+               default: str) -> str:
+    """The one closed-vocabulary prompt: blank takes the default, anything
+    outside the vocabulary re-asks."""
+    while True:
+        answer = ask(f"{prompt} ({'/'.join(choices)}) [{default}]: ").strip().lower()
+        if not answer:
+            return default
+        if answer in choices:
+            return answer
+        say(f"invalid choice, expected {'/'.join(choices)}")
+
+
+def stored_date(value: str | None) -> str | None:
+    """The stored form of a date label: an open-ended role stores null, which
+    is the one representation the ordering and coherence rules read as
+    'has not ended' (domain/dates.py)."""
+    return None if dates.is_open_ended(value) else value
+
+
+def ask_date(ask: Ask, say: Say, label: str, current: str | None,
+             editing: bool) -> str | None:
+    """A date the system can compare and order. Asked when the walk is in edit
+    mode, and whenever the extracted label is one the canonical parser cannot
+    read: an unreadable date silently accepted here is a package that can never
+    clear the Gauntlet's date-coherence check, discovered six minutes later."""
+    if not editing and dates.is_readable(current):
+        return stored_date(current)
+    if not editing:
+        say(f"  '{current}' is not a date this system can order.")
+    while True:
+        raw = ask(f"{label} [{current or ''}]: ").strip()
+        value = raw or current
+        if dates.is_readable(value):
+            return stored_date(value)
+        say("  expected a month and year (e.g. '2015-09', 'September 2015',"
+            " '09/2015'), a year ('2015'), or 'present' for an ongoing role")
+
+
+def write_stated_fact(conn: sqlite3.Connection,
+                      evidence_supplier: Callable[[], Evidence], statement: str,
+                      fact_type: str, provenance: str,
+                      experience_id: str | None = None) -> CareerFact:
+    """The one way a user-stated fact is created: the fact row (interview
+    sourced, approved by the act of stating it, active, stamped verified) and
+    the PROVES edge from the evidence row backing it, in one transaction. Every
+    flow that takes a fact from the human goes through here, so the shape
+    cannot drift between the sittings, the state commands and package review.
+
+    `provenance` is the one deliberate difference between the callers, passed
+    in rather than fixed here: provenance records where a row actually came
+    from, and flattening the flows into one value would make the graph less
+    honest, not more. `evidence_supplier` is called inside the transaction, so
+    a caller that mints its evidence row lazily (one row per sitting) mints it
+    atomically with the first fact that needs it. The boundary is reentrant, so
+    a caller writing several facts as one unit keeps its own atomicity."""
+    with transaction(conn):
+        fact = CareerFact(
+            id=new_id("fact"), fact_type=fact_type, statement=statement,
+            source="interview", user_approved=1, experience_id=experience_id,
+            verified_at=_now())
+        SqliteCareerFactRepository(conn).add(fact)
+        SqliteCareerEdgeRepository(conn).add(CareerEdge(
+            id=new_id("edge"), source_type="evidence", source_id=evidence_supplier().id,
+            edge_type="PROVES", target_type="career_fact", target_id=fact.id,
+            claim_kind="fact", provenance=provenance,
+            created_by="user", user_verified=1))
+    return fact
 
 
 def offer_quantifier(facts_repo: SqliteCareerFactRepository, fact_id: str,
@@ -275,7 +347,6 @@ def run_evidence_intake(conn: sqlite3.Connection, ask: Ask, say: Say,
     with a PROVES edge, so the new evidence can reach the graph."""
     evidence_repo = SqliteEvidenceRepository(conn)
     facts_repo = SqliteCareerFactRepository(conn)
-    edges_repo = SqliteCareerEdgeRepository(conn)
     say("\nAdditional evidence (repos, portfolio pieces, URLs; blank type to finish):")
     while True:
         evidence_type = _ask_choice(ask, say, "Evidence type", _EVIDENCE_INTAKE_TYPES, None)
@@ -293,14 +364,8 @@ def run_evidence_intake(conn: sqlite3.Connection, ask: Ask, say: Say,
         statement = ask(
             "One user-stated fact it proves (blank to skip): ").strip()
         if statement:
-            fact = CareerFact(id=new_id("fact"), fact_type="other", statement=statement,
-                              source="interview", user_approved=1, verified_at=_now())
-            facts_repo.add(fact)
-            edges_repo.add(CareerEdge(
-                id=new_id("edge"), source_type="evidence", source_id=evidence.id,
-                edge_type="PROVES", target_type="career_fact", target_id=fact.id,
-                claim_kind="fact", provenance="interview:evidence-intake",
-                created_by="user", user_verified=1))
+            fact = write_stated_fact(conn, lambda: evidence, statement, "other",
+                                     "interview:evidence-intake")
             offer_quantifier(facts_repo, fact.id, statement, fact.fact_type, ask, say)
         if checkpoint is not None and not checkpoint():
             return
@@ -355,29 +420,26 @@ def _ask_hard_exclusions(policies: SqliteUserPolicyRepository, ask: Ask, say: Sa
 
 
 def _ask_statement_facts(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:
-    facts_repo = SqliteCareerFactRepository(conn)
     evidence_repo = SqliteEvidenceRepository(conn)
-    edges_repo = SqliteCareerEdgeRepository(conn)
     say("\nStated facts (no form field of their own; blank skips):")
     interview_evidence: Evidence | None = None
-    for fact_type, prompt in _STATEMENT_FACT_ASKS:
-        statement = ask(f"{prompt}: ").strip()
-        if not statement:
-            continue
+
+    def evidence_row() -> Evidence:
+        # One row per sitting, minted with the first fact that needs it.
+        nonlocal interview_evidence
         if interview_evidence is None:
             interview_evidence = Evidence(
                 id=new_id("ev"), evidence_type="user_statement",
                 title=f"Deepen interview {_now()[:10]}")
             evidence_repo.add(interview_evidence)
-        fact = CareerFact(id=new_id("fact"), fact_type=fact_type,
-                          statement=statement, source="interview",
-                          user_approved=1, verified_at=_now())
-        facts_repo.add(fact)
-        edges_repo.add(CareerEdge(
-            id=new_id("edge"), source_type="evidence", source_id=interview_evidence.id,
-            edge_type="PROVES", target_type="career_fact", target_id=fact.id,
-            claim_kind="fact", provenance="interview:deepen",
-            created_by="user", user_verified=1))
+        return interview_evidence
+
+    for fact_type, prompt in _STATEMENT_FACT_ASKS:
+        statement = ask(f"{prompt}: ").strip()
+        if not statement:
+            continue
+        write_stated_fact(conn, evidence_row, statement, fact_type,
+                          "interview:deepen")
 
 
 def run_deepen(conn: sqlite3.Connection, ask: Ask, say: Say) -> None:

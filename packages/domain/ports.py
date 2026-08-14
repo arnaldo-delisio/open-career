@@ -49,6 +49,10 @@ class ExperienceRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[Experience]: ...
 
+    @abstractmethod
+    def update_fields(self, experience_id: str, title: str, org: str | None,
+                      start_date: str | None, end_date: str | None) -> None: ...
+
 
 class CareerFactRepository(ABC):
     @abstractmethod

@@ -33,13 +33,19 @@ from adapters.storage.sqlite_entities import (
     SqliteExperienceRepository,
 )
 from adapters.storage.sqlite_profile import SqliteUserProfileRepository
-from domain import dates
 from domain.edges import CareerEdge
-from domain.entities import Capability, CareerFact, CareerGoal, Evidence, Experience
+from domain.entities import CareerFact, CareerGoal, Evidence, Experience
 from domain.extraction import CvExtraction, CvExtractionService
 from domain.ids import new_id
 from domain.ports import ModelAdapter, StorageAdapter
-from apps.cli.interview import QUANTIFIABLE_FACT_TYPES, is_unquantified
+from apps.cli.state import write_capability_chain
+from apps.cli.interview import (
+    QUANTIFIABLE_FACT_TYPES,
+    ask_choice,
+    ask_date,
+    is_unquantified,
+    stored_date,
+)
 from domain.profile import InvalidProfileValueError
 from prompts import load_prompt
 
@@ -58,17 +64,6 @@ _PROFILE_BASICS = ("full_name", "email", "phone", "location")
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _ask_choice(ask: Callable[[str], str], say: Callable[[str], None], prompt: str,
-                choices: tuple[str, ...], default: str) -> str:
-    while True:
-        answer = ask(f"{prompt} ({'/'.join(choices)}) [{default}]: ").strip().lower()
-        if not answer:
-            return default
-        if answer in choices:
-            return answer
-        say(f"invalid choice, expected {'/'.join(choices)}")
 
 
 def run_onboarding(conn: sqlite3.Connection, storage: StorageAdapter,
@@ -194,7 +189,7 @@ def run_onboarding(conn: sqlite3.Connection, storage: StorageAdapter,
     else:
         say("No CV given; starting from the interview questions.")
 
-    _gap_questions(conn, evidence_repo, facts_repo, edges_repo, ask, say)
+    _gap_questions(conn, evidence_repo, ask, say)
     say("Onboarding complete.")
 
 
@@ -247,32 +242,6 @@ def _ingest_cv(conn: sqlite3.Connection, storage: StorageAdapter, model: ModelAd
     )
     SqliteEvidenceRepository(conn).add(cv_evidence)
     return cv_evidence, extraction
-
-
-def _stored_date(value: str | None) -> str | None:
-    """The stored form of a date label: an open-ended role stores null, which
-    is the one representation the ordering and coherence rules read as
-    'has not ended' (domain/dates.py)."""
-    return None if dates.is_open_ended(value) else value
-
-
-def _ask_date(ask: Callable[[str], str], say: Callable[[str], None],
-              label: str, current: str | None, editing: bool) -> str | None:
-    """A date the system can compare and order. Asked when the walk is in edit
-    mode, and whenever the extracted label is one the canonical parser cannot
-    read: an unreadable date silently accepted here is a package that can never
-    clear the Gauntlet's date-coherence check, discovered six minutes later."""
-    if not editing and dates.is_readable(current):
-        return _stored_date(current)
-    if not editing:
-        say(f"  '{current}' is not a date this system can order.")
-    while True:
-        raw = ask(f"{label} [{current or ''}]: ").strip()
-        value = raw or current
-        if dates.is_readable(value):
-            return _stored_date(value)
-        say("  expected a month and year (e.g. '2015-09', 'September 2015',"
-            " '09/2015'), a year ('2015'), or 'present' for an ongoing role")
 
 
 @dataclass
@@ -408,8 +377,8 @@ def _review_extraction(conn: sqlite3.Connection, extraction: CvExtraction,
     for row in sorted(existing_rows,
                       key=lambda e: (e.display_order is None, e.display_order)):
         by_shape.setdefault(
-            (row.kind, row.title, row.org, _stored_date(row.start_date),
-             _stored_date(row.end_date)), []).append(row)
+            (row.kind, row.title, row.org, stored_date(row.start_date),
+             stored_date(row.end_date)), []).append(row)
     order_base = max((e.display_order for e in existing_rows
                       if e.display_order is not None), default=-1) + 1
 
@@ -435,8 +404,8 @@ def _review_extraction(conn: sqlite3.Connection, extraction: CvExtraction,
 
     for position, draft in enumerate(extraction.experiences):
         queue = by_shape.get(
-            (draft.kind, draft.title, draft.org, _stored_date(draft.start_date),
-             _stored_date(draft.end_date)))
+            (draft.kind, draft.title, draft.org, stored_date(draft.start_date),
+             stored_date(draft.end_date)))
         if queue:
             experience_ids[position] = queue.pop(0).id
             resolved.add(position)
@@ -500,8 +469,8 @@ def _review_extraction(conn: sqlite3.Connection, extraction: CvExtraction,
             say(f"  editing item {item.index}: {item.label}")
             title = ask(f"Title [{title}]: ").strip() or title
             org = ask(f"Org [{org}]: ").strip() or org
-        start_date = _ask_date(ask, say, "Start date", draft.start_date, editing)
-        end_date = _ask_date(ask, say, "End date", draft.end_date, editing)
+        start_date = ask_date(ask, say, "Start date", draft.start_date, editing)
+        end_date = ask_date(ask, say, "End date", draft.end_date, editing)
         experience = Experience(
             id=new_id("exp"), kind=draft.kind, title=title, org=org,
             start_date=start_date, end_date=end_date, summary=draft.summary,
@@ -691,7 +660,6 @@ def _ask_numbers(conn: sqlite3.Connection, facts_repo: SqliteCareerFactRepositor
 
 
 def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceRepository,
-                   facts_repo: SqliteCareerFactRepository, edges_repo: SqliteCareerEdgeRepository,
                    ask: Callable[[str], str], say: Callable[[str], None]) -> None:
     """Ask only what the CV cannot show: capabilities, goals, profile basics.
     Answers land as approved interview-sourced facts plus PROVES/SUPPORTS edges."""
@@ -717,27 +685,10 @@ def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceReposi
             say(f"'{name}' already exists; skipping.")
             continue
         # No strength question (OC-40): what the capability rests on is computed
-        # from the graph, and a rating stays available deliberately later.
-        capability = Capability(id=new_id("cap"), name=name, strength="unrated")
-        capabilities_repo.add(capability)
-        fact = CareerFact(
-            id=new_id("fact"), fact_type="skill_use",
-            statement=f"Self-assessed capability: {name}",
-            source="interview", user_approved=1, verified_at=_now(),
-        )
-        facts_repo.add(fact)
-        edges_repo.add(CareerEdge(
-            id=new_id("edge"), source_type="evidence", source_id=evidence_row().id,
-            edge_type="PROVES", target_type="career_fact", target_id=fact.id,
-            claim_kind="fact", provenance="onboarding:interview",
-            created_by="user", user_verified=1,
-        ))
-        edges_repo.add(CareerEdge(
-            id=new_id("edge"), source_type="evidence", source_id=evidence_row().id,
-            edge_type="SUPPORTS", target_type="capability", target_id=capability.id,
-            claim_kind="fact", provenance="onboarding:interview",
-            created_by="user", user_verified=1,
-        ))
+        # from the graph, and a rating stays available deliberately later. The
+        # chain is written through the shared seam, so onboarding and
+        # `capability add` cannot drift apart.
+        write_capability_chain(conn, name, evidence_row, "onboarding:interview")
 
     say("\nGoals: where should this career go? (blank to finish)")
     goals_repo = SqliteCareerGoalRepository(conn)
@@ -745,7 +696,7 @@ def _gap_questions(conn: sqlite3.Connection, evidence_repo: SqliteEvidenceReposi
         statement = ask("Goal: ").strip()
         if not statement:
             break
-        horizon = _ask_choice(ask, say, "Horizon", _HORIZONS, "mid")
+        horizon = ask_choice(ask, say, "Horizon", _HORIZONS, "mid")
         goals_repo.add(CareerGoal(id=new_id("goal"), statement=statement, horizon=horizon))
 
     say("\nProfile basics (blank to skip a field):")

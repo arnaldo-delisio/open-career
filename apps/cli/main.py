@@ -44,6 +44,7 @@ from apps.cli import families as families_cli
 from apps.cli import interview as interview_cli
 from apps.cli import package_cmd
 from apps.cli import session as session_cli
+from apps.cli import state as state_cli
 from apps.cli import stories as stories_cli
 from domain.policies import InvalidPolicyValueError, UnknownPolicyKeyError
 from domain.cv_model import CvModelError
@@ -317,6 +318,30 @@ def cmd_stories(_args: argparse.Namespace) -> None:
         conn.close()
 
 
+def cmd_experience(args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        if args.experience_command == "add":
+            state_cli.run_experience_add(conn, input, print)
+        elif args.experience_command == "list":
+            state_cli.run_experience_list(conn, print)
+        elif args.experience_command == "edit":
+            state_cli.run_experience_edit(conn, args.id, input, print)
+    finally:
+        conn.close()
+
+
+def cmd_capability(args: argparse.Namespace) -> None:
+    conn = _connect()
+    try:
+        if args.capability_command == "add":
+            state_cli.run_capability_add(conn, input, print)
+        elif args.capability_command == "list":
+            state_cli.run_capability_list(conn, print)
+    finally:
+        conn.close()
+
+
 def cmd_session(args: argparse.Namespace) -> None:
     if args.session_command == "start":
         session_cli.run_start(args.flow, args.cv, print)
@@ -558,6 +583,30 @@ def main(argv: list[str] | None = None) -> None:
     session_sub.add_parser(
         "stop", help="terminate the sitting; everything answered so far is saved"
     ).set_defaults(func=cmd_session)
+
+    p_experience = sub.add_parser(
+        "experience", help="experiences after onboarding: add, list, edit"
+                           " (facts are retracted, never deleted)")
+    experience_sub = p_experience.add_subparsers(dest="experience_command", required=True)
+    experience_sub.add_parser(
+        "add", help="state a new role, project, venture, education or other,"
+                    " with its facts").set_defaults(func=cmd_experience)
+    experience_sub.add_parser(
+        "list", help="experiences with dates and fact counts").set_defaults(func=cmd_experience)
+    p_experience_edit = experience_sub.add_parser(
+        "edit", help="correct title, org and dates; add or retract facts")
+    p_experience_edit.add_argument("id", help="experience id (see: experience list)")
+    p_experience_edit.set_defaults(func=cmd_experience)
+
+    p_capability = sub.add_parser(
+        "capability", help="capabilities after onboarding (born unrated, OC-40)")
+    capability_sub = p_capability.add_subparsers(dest="capability_command", required=True)
+    capability_sub.add_parser(
+        "add", help="name a capability; its evidence chain is minted with it"
+    ).set_defaults(func=cmd_capability)
+    capability_sub.add_parser(
+        "list", help="name, stored strength, and computed evidence depth"
+    ).set_defaults(func=cmd_capability)
 
     p_profile = sub.add_parser("profile", help="canonical profile fields (closed set, audited writes)")
     profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)
