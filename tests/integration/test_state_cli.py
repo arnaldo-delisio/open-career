@@ -20,21 +20,25 @@ from adapters.storage.sqlite_entities import (
     SqliteCareerFactRepository,
     SqliteEvidenceRepository,
     SqliteExperienceRepository,
+    SqliteRoleFamilyRepository,
 )
 from apps.cli.onboarding import run_onboarding
 from apps.cli.stories import run_stories
 from apps.cli.session import FileTransport
+from apps.cli.interview import write_capability_link, write_stated_fact
 from apps.cli.state import (
+    _ask_capability_choices,
     run_capability_add,
     run_capability_list,
     run_experience_add,
     run_experience_edit,
     run_experience_list,
 )
-from domain.edges import is_generation_eligible
-from domain.entities import Capability, Experience
+from domain.edges import CareerEdge, is_generation_eligible
+from domain.entities import Capability, Evidence, Experience, RoleFamily
 from domain.ids import new_id
-from domain.traversal import EvidenceTraversal, evidence_depth
+from domain.selection import FamilyEvidenceSelection
+from domain.traversal import EvidenceTraversal, evidence_depth, is_story_evidence
 
 
 def _scripted(answers):
@@ -98,7 +102,11 @@ def test_experience_add_writes_the_rows_and_edges_the_interview_writes(tmp_path)
         None, None, experience.id, True)
     assert len(evidence) == 1
     assert evidence[0].evidence_type == "user_statement"
-    assert evidence[0].notes is None  # not a story: the story marker is notes
+    # The owner marker: one statement row per experience, so facts stated in a
+    # later edit share the owner the capability links hang off. It is not the
+    # story marker, so this is still not a story.
+    assert evidence[0].notes == f"facts-for-experience:{experience.id}"
+    assert not is_story_evidence(evidence[0])
     assert len(edges) == 1
     assert _edge_shape(edges[0]) == (
         "evidence", "PROVES", "career_fact", "fact", None, None, "user", 1, None)
@@ -124,8 +132,10 @@ def _experience_fact_write(conn, statement):
         # The statement is the caller's own words, so it is normalized out and
         # the rest of the fact row compared attribute by attribute.
         "fact": _fact_shape(replace(fact, statement="<statement>")),
+        # The owner marker names the experience, so it cannot be shared between
+        # two writes; it is normalized out here and asserted where it matters.
         "evidence": (source.evidence_type, source.locator, source.content_hash,
-                     source.notes, source.review_completed_at),
+                     source.review_completed_at),
         "proves": _edge_shape(proves[0]),
         "provenance": proves[0].provenance,
     }
@@ -140,7 +150,9 @@ def test_experience_add_writes_the_fact_the_interview_path_writes(tmp_path):
     SqliteCapabilityRepository(conn).add(
         Capability(id=new_id("cap"), name="python backend", strength="unrated"))
     try:
-        run_experience_add(conn, _scripted(_ADD_ONE), lambda _line: None)
+        # A capability exists here, so the add flow offers the link ask; the
+        # blank keeps this comparison about the fact write alone.
+        run_experience_add(conn, _scripted(_ADD_ONE + [""]), lambda _line: None)
         # Cluster 2 attaches its fact to the same experience the command made,
         # so both writes are the same kind of write.
         run_stories(conn, storage,
@@ -484,3 +496,320 @@ def test_the_flows_drive_one_line_at_a_time_over_the_session_transport(tmp_path)
     assert len(facts) == 2
     transcript = (transport_dir / "transcript.log").read_text()
     assert "Fact (blank to finish): " in transcript
+
+
+# --- capability links: what makes an added experience renderable --------------
+
+def _targeted_family(conn, capability_id):
+    """A role family targeting one capability: the first hop of the package
+    walk (role_family -> TARGETS -> capability -> SUPPORTS -> PROVES -> fact)."""
+    family = RoleFamily(id=new_id("fam"), name="FDE", rationale="target",
+                        display_order=0)
+    SqliteRoleFamilyRepository(conn).add(family)
+    SqliteCareerEdgeRepository(conn).add(CareerEdge(
+        id=new_id("edge"), source_type="role_family", source_id=family.id,
+        edge_type="TARGETS", target_type="capability", target_id=capability_id,
+        claim_kind="fact", provenance="test", created_by="user", user_verified=1))
+    return family
+
+
+def _selection(conn, family_id):
+    traversal = EvidenceTraversal(
+        SqliteCareerEdgeRepository(conn), SqliteEvidenceRepository(conn),
+        SqliteCareerFactRepository(conn), SqliteExperienceRepository(conn))
+    return FamilyEvidenceSelection(
+        SqliteCareerEdgeRepository(conn), SqliteCapabilityRepository(conn),
+        traversal).select(family_id)
+
+
+def test_an_added_experience_with_links_is_reached_by_the_package_walk(tmp_path):
+    """The defect this fixes: facts added by `experience add` had no SUPPORTS
+    edge, so the walk stopped at the capability and the experience rendered as
+    a bare title and date. Asserted through the real selection, not the edge
+    rows: reachability is the point."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                            strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    try:
+        family = _targeted_family(conn, capability.id)
+        run_experience_add(conn, _scripted(_ADD_ONE + ["1"]), lambda _line: None)
+        report = _selection(conn, family.id)
+        statements = [fc.fact.statement for s in report.selections
+                      for chain in s.chains for fc in chain.facts]
+        experiences = [fc.experience.title for s in report.selections
+                       for chain in s.chains for fc in chain.facts if fc.experience]
+    finally:
+        conn.close()
+    assert report.gaps == ()  # the capability is covered, not a gap
+    assert statements == ["Shipped the billing pipeline"]
+    assert experiences == ["Founding Engineer"]
+
+
+def test_a_blank_selection_mints_no_link_edges(tmp_path):
+    """Blank means none, and nothing is preselected: a blanket link from an
+    experience to every capability is the meaningless edge OC-39 deleted."""
+    conn = _instance(tmp_path)
+    SqliteCapabilityRepository(conn).add(
+        Capability(id=new_id("cap"), name="python backend", strength="unrated"))
+    try:
+        run_experience_add(conn, _scripted(_ADD_ONE + [""]), lambda _line: None)
+        edges = SqliteCareerEdgeRepository(conn).list_all()
+    finally:
+        conn.close()
+    assert [e.edge_type for e in edges] == ["PROVES"]
+    rule = _ask_capability_choices.__doc__
+    assert "Nothing is preselected" in rule and "OC-39" in rule
+
+
+def test_edit_links_an_experience_that_had_none_and_unlinking_supersedes(tmp_path):
+    """The repair path for an experience added before the links existed, and
+    the removal that retires an edge instead of deleting it (OC-31)."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                            strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    says = []
+    try:
+        family = _targeted_family(conn, capability.id)
+        run_experience_add(conn, _scripted(_ADD_ONE + [""]), lambda _line: None)
+        experience = SqliteExperienceRepository(conn).list_all()[0]
+        assert _selection(conn, family.id).gaps  # unreachable before the repair
+        run_experience_edit(conn, experience.id,
+                            _scripted(["", "", "", "",
+                                       "links", "link", "1", "done"]), says.append)
+        after_link = _selection(conn, family.id)
+        statements = [fc.fact.statement for s in after_link.selections
+                      for chain in s.chains for fc in chain.facts]
+        run_experience_edit(conn, experience.id,
+                            _scripted(["", "", "", "",
+                                       "links", "unlink", "1", "done"]), says.append)
+        after_unlink = _selection(conn, family.id)
+        edges = SqliteCareerEdgeRepository(conn).list_all()
+    finally:
+        conn.close()
+    assert statements == ["Shipped the billing pipeline"]
+    assert after_unlink.gaps  # the capability is uncovered again
+    retired = [e for e in edges if e.edge_type in ("SUPPORTS", "DEMONSTRATES")]
+    assert len(retired) == 2  # both rows survive their removal
+    assert all(e.superseded_at is not None for e in retired)
+    assert "not deleted" in "\n".join(says)
+
+
+def test_the_shared_writer_does_not_mint_a_second_demonstrates_edge(tmp_path):
+    """Two evidence rows can support the same capability from the same
+    experience; the summary edge between them is one edge, not two."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                            strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    SqliteExperienceRepository(conn).add(
+        Experience(id="exp-1", kind="role", title="Role", org="Acme", display_order=0))
+    evidence_repo = SqliteEvidenceRepository(conn)
+    try:
+        for number in (1, 2):
+            evidence = Evidence(id=f"ev-{number}", evidence_type="user_statement",
+                                title=f"Stated experience {number}")
+            evidence_repo.add(evidence)
+            write_capability_link(conn, capability.id, evidence.id,
+                                  "experience:edit", "exp-1")
+        edges = SqliteCareerEdgeRepository(conn).list_all()
+    finally:
+        conn.close()
+    assert len([e for e in edges if e.edge_type == "SUPPORTS"]) == 2
+    assert len([e for e in edges if e.edge_type == "DEMONSTRATES"]) == 1
+
+
+def test_end_of_input_in_the_fact_loop_reports_what_was_saved(tmp_path):
+    """EOF is not a crash: the experience and its stated facts are on disk, so
+    the command says so and exits nonzero rather than printing a traceback."""
+    conn = _instance(tmp_path)
+    remaining = list(_ADD_ONE[:-1])  # every answer except the blank that finishes
+
+    def ask(_prompt):
+        if not remaining:
+            raise EOFError
+        return remaining.pop(0)
+
+    says = []
+    try:
+        with pytest.raises(SystemExit) as exit_info:
+            run_experience_add(conn, ask, says.append)
+        facts = SqliteCareerFactRepository(conn).list_all()
+        experiences = SqliteExperienceRepository(conn).list_all()
+    finally:
+        conn.close()
+    assert exit_info.value.code == 1
+    assert len(experiences) == 1 and len(facts) == 1
+    transcript = "\n".join(says)
+    assert "input ended" in transcript
+    assert "with 1 facts" in transcript
+    assert "experience edit" in transcript  # how to add the rest
+
+
+def _reachable(conn, family_id):
+    return sorted(fc.fact.statement for s in _selection(conn, family_id).selections
+                  for chain in s.chains for fc in chain.facts)
+
+
+def test_a_fact_added_after_the_link_is_reachable_too(tmp_path):
+    """The per-experience evidence row earns its keep here: a fact stated in a
+    later edit lands on the row the link already hangs off, so it reaches
+    packaging instead of arriving silently invisible."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                            strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    try:
+        family = _targeted_family(conn, capability.id)
+        run_experience_add(conn, _scripted(_ADD_ONE + ["1"]), lambda _line: None)
+        experience = SqliteExperienceRepository(conn).list_all()[0]
+        run_experience_edit(conn, experience.id,
+                            _scripted(["", "", "", "",
+                                       "add", "Cut latency by 40%", "metric", "",
+                                       "done"]), lambda _line: None)
+        reachable = _reachable(conn, family.id)
+        evidence = SqliteEvidenceRepository(conn).list_all()
+    finally:
+        conn.close()
+    assert reachable == ["Cut latency by 40%", "Shipped the billing pipeline"]
+    # One owner row for both sittings, not one per session.
+    assert [e.notes for e in evidence] == [f"facts-for-experience:{experience.id}"]
+
+
+def test_an_experience_linked_with_no_facts_reaches_the_facts_stated_later(tmp_path):
+    """Linking first and stating facts afterwards is the other order, and it
+    has to end in the same reachable chain."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                           strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    try:
+        family = _targeted_family(conn, capability.id)
+        # No facts at add time, then the link, then the facts.
+        run_experience_add(conn, _scripted(
+            ["role", "Founding Engineer", "Acme", "2024-01", "", "", "1"]),
+            lambda _line: None)
+        experience = SqliteExperienceRepository(conn).list_all()[0]
+        assert _reachable(conn, family.id) == []
+        run_experience_edit(conn, experience.id,
+                            _scripted(["", "", "", "",
+                                       "add", "Shipped the billing pipeline",
+                                       "achievement", "",
+                                       "done"]), lambda _line: None)
+        reachable = _reachable(conn, family.id)
+    finally:
+        conn.close()
+    assert reachable == ["Shipped the billing pipeline"]
+
+
+def _shared_cv_evidence(conn, first_id, second_id):
+    """The live instance's shape: one CV extraction row proving facts for
+    several experiences, so its SUPPORTS edge belongs to none of them."""
+    evidence = Evidence(id="ev-cv", evidence_type="document", title="CV")
+    SqliteEvidenceRepository(conn).add(evidence)
+    for experience_id, statement in ((first_id, "Led the platform team"),
+                                     (second_id, "Ran the data migration")):
+        write_stated_fact(conn, lambda: evidence, statement, "achievement",
+                          "onboarding:cv", experience_id)
+    return evidence
+
+
+def test_unlink_refuses_to_retire_support_shared_with_another_experience(tmp_path):
+    """Unlink never breaks a chain it does not own: the shared row's SUPPORTS
+    edge stays, the experience's own DEMONSTRATES edge goes, and the refusal is
+    stated rather than guessed at."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                           strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    experiences_repo = SqliteExperienceRepository(conn)
+    experiences_repo.add(Experience(id="exp-1", kind="role", title="First",
+                                    org="Acme", display_order=0))
+    experiences_repo.add(Experience(id="exp-2", kind="role", title="Second",
+                                    org="Beta", display_order=1))
+    says = []
+    try:
+        family = _targeted_family(conn, capability.id)
+        evidence = _shared_cv_evidence(conn, "exp-1", "exp-2")
+        # The CV row already supports the capability (the onboarding walk's
+        # own link), so both experiences' facts are reachable through it.
+        write_capability_link(conn, capability.id, evidence.id, "onboarding:cv",
+                              "exp-1")
+        assert _reachable(conn, family.id) == ["Led the platform team",
+                                               "Ran the data migration"]
+        run_experience_edit(conn, "exp-1",
+                            _scripted(["", "", "", "",
+                                       "links", "unlink", "1", "done"]), says.append)
+        edges = SqliteCareerEdgeRepository(conn).list_all()
+        reachable = _reachable(conn, family.id)
+    finally:
+        conn.close()
+    supports = [e for e in edges if e.edge_type == "SUPPORTS"]
+    demonstrates = [e for e in edges if e.edge_type == "DEMONSTRATES"]
+    assert [e.superseded_at for e in supports] == [None]  # untouched
+    assert all(e.superseded_at is not None for e in demonstrates)
+    # exp-2's chain survives intact, which is the whole point of the refusal.
+    assert reachable == ["Led the platform team", "Ran the data migration"]
+    transcript = "\n".join(says)
+    assert "it also proves other experiences' facts" in transcript
+    assert "would break" in transcript
+
+
+def test_unlink_retires_only_the_selected_experiences_own_support(tmp_path):
+    """Two experiences with their own owner rows: unlinking one removes only
+    its reachable facts."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                           strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    try:
+        family = _targeted_family(conn, capability.id)
+        run_experience_add(conn, _scripted(_ADD_ONE + ["1"]), lambda _line: None)
+        run_experience_add(conn, _scripted(
+            ["role", "Second", "Beta", "2022-01", "2023-01",
+             "Ran the data migration", "achievement", "", "1"]),
+            lambda _line: None)
+        first = [e for e in SqliteExperienceRepository(conn).list_all()
+                 if e.title == "Founding Engineer"][0]
+        assert _reachable(conn, family.id) == ["Ran the data migration",
+                                              "Shipped the billing pipeline"]
+        run_experience_edit(conn, first.id,
+                            _scripted(["", "", "", "",
+                                       "links", "unlink", "1", "done"]),
+                            lambda _line: None)
+        reachable = _reachable(conn, family.id)
+    finally:
+        conn.close()
+    assert reachable == ["Ran the data migration"]
+
+
+def test_a_fact_added_to_a_pre_fix_experience_is_reachable(tmp_path):
+    """The live instance's other legacy shape: an experience whose link hangs
+    off an old per-session evidence row. Facts stated now land on the
+    experience's own owner row, so the link the user already made is extended
+    to that row with the fact, inside the same transaction."""
+    conn = _instance(tmp_path)
+    capability = Capability(id=new_id("cap"), name="python backend",
+                            strength="unrated")
+    SqliteCapabilityRepository(conn).add(capability)
+    SqliteExperienceRepository(conn).add(
+        Experience(id="exp-1", kind="role", title="Role", org="Acme", display_order=0))
+    session_evidence = Evidence(id="ev-session", evidence_type="user_statement",
+                                title="Stated experience 2026-08-12")
+    SqliteEvidenceRepository(conn).add(session_evidence)
+    try:
+        family = _targeted_family(conn, capability.id)
+        write_stated_fact(conn, lambda: session_evidence, "Shipped the pipeline",
+                          "achievement", "experience:add", "exp-1")
+        write_capability_link(conn, capability.id, session_evidence.id,
+                              "experience:edit", "exp-1")
+        assert _reachable(conn, family.id) == ["Shipped the pipeline"]
+        run_experience_edit(conn, "exp-1",
+                            _scripted(["", "", "", "",
+                                       "add", "Cut latency by 40%", "metric", "",
+                                       "done"]), lambda _line: None)
+        reachable = _reachable(conn, family.id)
+    finally:
+        conn.close()
+    assert reachable == ["Cut latency by 40%", "Shipped the pipeline"]

@@ -12,7 +12,7 @@ database currently holds. All ids are TEXT, application-generated prefixed ULIDs
 | `experiences` | containers facts hang off (role, project, education, venture, other) | `kind` CHECK enum; `start_date`/`end_date` are display labels stored as written ("September 2015" as legitimately as "2015-09"), null end = ongoing; the canonical time value behind a label comes from `packages/domain/dates.py`, which every comparison and ordering goes through |
 | `career_facts` | normalized assertions, the atoms of generation | `fact_type`, `status`, `source` CHECK enums; `user_approved` gates generation use |
 | `evidence` | things that back facts and capabilities | `evidence_type` CHECK enum; files live under `instance/` via StorageAdapter, the row stores a `locator`, never bytes |
-| `capabilities` | operational capability model | `name` UNIQUE; `strength` is the enum none/weak/moderate/strong, never a float |
+| `capabilities` | operational capability model | `name` UNIQUE; `strength` is the enum unrated/none/weak/moderate/strong, never a float; onboarding stores `unrated` and never asks (OC-40), and what the model reads is computed evidence depth (`packages/domain/traversal.py`), never this column |
 | `role_families` | target role families | `name` UNIQUE; JSON-validated `search_vocabulary`/`adjacent_titles`; no priority column (allocation in the current approved strategy version is the sole ranking authority) |
 | `career_goals` | long-horizon objectives | `horizon`, `status` CHECK enums |
 | `strategy_versions` | append-only versioned strategy | `version` UNIQUE; updates insert, never mutate; current = highest approved |

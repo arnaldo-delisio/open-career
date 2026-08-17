@@ -28,6 +28,10 @@ class CareerEdgeRepository(ABC):
     def list_all(self) -> list[CareerEdge]: ...
 
     @abstractmethod
+    def supersede(self, edge_id: str) -> CareerEdge:
+        """Retire an edge by stamping superseded_at; edges never delete."""
+
+    @abstractmethod
     def list_untyped(self) -> list[CareerEdge]:
         """Edges migrated from 0001 with 'unknown' endpoint types, excluded
         from traversal until re-typed."""

@@ -77,6 +77,27 @@ class SqliteCareerEdgeRepository(CareerEdgeRepository):
                 bump_dependency_epoch(self._conn)
         return self._get(edge.id)
 
+    def supersede(self, edge_id: str) -> CareerEdge:
+        """Retire an edge by stamping superseded_at (OC-31: edges are never
+        deleted, so the trail of what was once linked survives the change).
+        Superseding removes an eligible edge from the traversal, so the
+        dependency epoch advances with it, exactly as adding one does."""
+        with transaction(self._conn):
+            row = self._conn.execute(
+                f"SELECT {_COLUMNS} FROM career_edges WHERE id = ?", (edge_id,)
+            ).fetchone()
+            if row is None:
+                raise EdgeValidationError(f"edge '{edge_id}' does not exist")
+            edge = _row_to_edge(row)
+            if edge.superseded_at is not None:
+                return edge
+            self._conn.execute(
+                "UPDATE career_edges SET superseded_at ="
+                " strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", (edge_id,))
+            if is_generation_eligible(edge):
+                bump_dependency_epoch(self._conn)
+        return self._get(edge_id)
+
     def _require_endpoint(self, entity_type: str, entity_id: str) -> None:
         table = ENTITY_TABLES.get(entity_type)
         if table is None:

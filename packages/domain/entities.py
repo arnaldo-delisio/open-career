@@ -15,8 +15,9 @@ EvidenceType = Literal[
     "cv", "document", "repository", "portfolio", "url",
     "user_statement", "reference", "artifact", "metric_record",
 ]
-# Strength is an enum, not a float (OC-22: no fake precision).
-CapabilityStrength = Literal["none", "weak", "moderate", "strong"]
+# Strength is an enum, not a float (OC-22: no fake precision). Onboarding
+# never asks for it and stores 'unrated' (OC-40); a rating is deliberate.
+CapabilityStrength = Literal["unrated", "none", "weak", "moderate", "strong"]
 RoleFamilyStatus = Literal["active", "paused", "dropped"]
 GoalHorizon = Literal["near", "mid", "long"]
 GoalStatus = Literal["active", "achieved", "dropped"]

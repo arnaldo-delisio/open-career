@@ -28,6 +28,7 @@ from apps.cli.interview import (
     ask_yes_no,
     offer_quantifier,
     run_evidence_intake,
+    write_capability_link,
     write_stated_fact,
     store_statement_file,
 )
@@ -170,11 +171,8 @@ def _run_story_bank(conn, storage: StorageAdapter, ask: Ask, say: Say) -> None:
                 say(f"  (unknown capability '{name}'; add it with"
                     " `open-career capability add`, then re-run this cluster)")
                 continue
-            edges_repo.add(CareerEdge(
-                id=new_id("edge"), source_type="evidence", source_id=evidence_id,
-                edge_type="SUPPORTS", target_type="capability", target_id=capability.id,
-                claim_kind="fact", provenance="stories:story-bank",
-                created_by="user", user_verified=1))
+            write_capability_link(conn, capability.id, evidence_id,
+                                  "stories:story-bank")
         say(f"  story saved ({locator}).")
         if not pacer.checkpoint():
             return
@@ -216,18 +214,8 @@ def _run_capability_deepening(conn, ask: Ask, say: Say) -> None:
         evidence_repo.add(evidence)
         fact = write_stated_fact(conn, lambda: evidence, statement, "achievement",
                                  "stories:capability-deepening", experience.id)
-        edges_repo.add(CareerEdge(
-            id=new_id("edge"), source_type="evidence", source_id=evidence.id,
-            edge_type="SUPPORTS", target_type="capability", target_id=capability.id,
-            claim_kind="fact", provenance="stories:capability-deepening",
-            created_by="user", user_verified=1))
-        if not any(e.source_id == experience.id for e in edges_repo.active_edges_to(
-                "capability", capability.id, "DEMONSTRATES")):
-            edges_repo.add(CareerEdge(
-                id=new_id("edge"), source_type="experience", source_id=experience.id,
-                edge_type="DEMONSTRATES", target_type="capability", target_id=capability.id,
-                claim_kind="fact", provenance="stories:capability-deepening",
-                created_by="user", user_verified=1))
+        write_capability_link(conn, capability.id, evidence.id,
+                              "stories:capability-deepening", experience.id)
         offer_quantifier(facts_repo, fact.id, statement, fact.fact_type, ask, say)
         say("  chain minted (fact, evidence, PROVES, SUPPORTS, DEMONSTRATES).")
         if not pacer.checkpoint():

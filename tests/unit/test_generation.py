@@ -3,6 +3,8 @@
 
 import json
 
+import pytest
+
 from domain.generation import (
     MAX_DRAFT_ATTEMPTS,
     CvDraftingService,
@@ -152,3 +154,26 @@ def test_prompt_contains_context_snapshot():
     CvDraftingService(model, "PROMPT {context_json}").draft(context, "2026-08-11T00:00:00Z")
     assert context.snapshot_hash() is not None
     assert json.loads(context.snapshot_json())["strategy"]["objective"] in model.prompts[0]
+
+
+def test_a_non_string_date_field_fails_schema_validation_not_the_render():
+    """The renderer reads dates as labels, so a number or an object arriving
+    in one is a schema failure with the field named, never an AttributeError
+    at render time."""
+    from domain.cv_model import CvModelError, parse_cv_model
+
+    payload = json.loads(make_cv().to_json())
+    payload["experiences"][0]["end_date"] = 2024
+    with pytest.raises(CvModelError, match="end_date: must be a string or null"):
+        parse_cv_model(json.dumps(payload))
+    payload["experiences"][0]["end_date"] = None
+    payload["experiences"][0]["org"] = {"name": "Acme"}
+    with pytest.raises(CvModelError, match="org: must be a string or null"):
+        parse_cv_model(json.dumps(payload))
+    # The retry loop treats it as any other schema failure, named back.
+    context = make_context()
+    model = FakeModel([json.dumps(payload), make_cv().to_json()])
+    result = CvDraftingService(model, "PROMPT {context_json}").draft(
+        context, "2026-08-11T00:00:00Z")
+    assert result.report.passed and result.attempts == 2
+    assert "schema validation" in model.prompts[1] and "org" in model.prompts[1]

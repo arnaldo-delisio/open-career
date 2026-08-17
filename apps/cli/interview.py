@@ -140,6 +140,45 @@ def write_stated_fact(conn: sqlite3.Connection,
     return fact
 
 
+def write_capability_link(conn: sqlite3.Connection, capability_id: str,
+                          evidence_id: str, provenance: str,
+                          experience_id: str | None = None) -> None:
+    """The one way an evidence row is linked to a capability: the SUPPORTS edge
+    that makes the facts that evidence proves reachable by the package walk
+    (family -> capability -> SUPPORTS -> PROVES -> fact), plus, when the link
+    comes from an experience, the DEMONSTRATES summary edge, skipped when an
+    active one already exists. One transaction, so a link never lands half
+    made, and one writer, so the story bank, capability deepening and the
+    experience commands cannot drift apart.
+
+    Which capabilities an item demonstrates is always the user's answer and
+    never a default: a blanket link from one item to every capability is the
+    meaningless edge OC-39 deleted, so callers ask and pass only what was
+    chosen."""
+    edges_repo = SqliteCareerEdgeRepository(conn)
+    with transaction(conn):
+        supports = edges_repo.active_edges_to("capability", capability_id, "SUPPORTS")
+        # Idempotent by design: a flow that writes facts one at a time asks for
+        # the same link after each of them, and re-stating a link is not an
+        # error, it is a no-op.
+        if not any(e.source_id == evidence_id for e in supports):
+            edges_repo.add(CareerEdge(
+                id=new_id("edge"), source_type="evidence", source_id=evidence_id,
+                edge_type="SUPPORTS", target_type="capability",
+                target_id=capability_id, claim_kind="fact", provenance=provenance,
+                created_by="user", user_verified=1))
+        if experience_id is None:
+            return
+        if any(e.source_id == experience_id for e in edges_repo.active_edges_to(
+                "capability", capability_id, "DEMONSTRATES")):
+            return
+        edges_repo.add(CareerEdge(
+            id=new_id("edge"), source_type="experience", source_id=experience_id,
+            edge_type="DEMONSTRATES", target_type="capability",
+            target_id=capability_id, claim_kind="fact", provenance=provenance,
+            created_by="user", user_verified=1))
+
+
 def offer_quantifier(facts_repo: SqliteCareerFactRepository, fact_id: str,
                      statement: str, fact_type: str, ask: Ask, say: Say) -> None:
     """One optional follow-up on an unquantified confirmed fact. A supplied
